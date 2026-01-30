@@ -1,6 +1,6 @@
 # codepm-notify
 
-一个轻量的通知 Hub（Rust），用于把任务/对话的关键事件推送到多个通知渠道（sinks）。
+一个轻量的通知 Hub（Rust），用于把任意事件推送到多个通知渠道（sinks）。
 
 当前实现：
 
@@ -14,20 +14,11 @@
 
 ## 配置（环境变量）
 
-- `CODE_PM_NOTIFY_SOUND=1`：启用声音
-- `CODE_PM_NOTIFY_SOUND_CMD_JSON='["afplay","/System/Library/Sounds/Ping.aiff"]'`：可选，自定义播放命令 argv（JSON 数组）
-- `CODE_PM_NOTIFY_FEISHU_WEBHOOK_URL=<url>`：启用飞书 webhook
-- `CODE_PM_NOTIFY_EVENTS=turn_completed,approval_requested`：启用事件（默认启用 `turn_completed,approval_requested`）
-
-可选事件：
-
-- `turn_completed`
-- `approval_requested`
-- `message_received`
+本库不规定环境变量协议；配置应由上层应用负责（比如 adapter 层解析 env，然后构造 sinks + Hub）。
 
 ## 与 `codex_pm` 集成
 
-`pm-app-server` 通过 feature `notify` 集成（默认关闭）。示例：
+`codex_pm` 内的 `codepm-notify-adapter` 负责解析 `CODE_PM_NOTIFY_*` 并构造 Hub；`pm-app-server` 通过 feature `notify` 集成（默认关闭）。示例：
 
 ```bash
 cd ../codex_pm

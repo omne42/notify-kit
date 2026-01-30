@@ -10,8 +10,10 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `codepm-notify` crate：提供 `Hub` + `Sink` 抽象。
 - `sound` sink：终端 bell / 自定义播放命令。
 - `feishu` sink：飞书 webhook（text 消息）。
-- 基于环境变量的配置与事件过滤（`CODE_PM_NOTIFY_*`）。
+- `HubConfig`：支持可选 kind allow-list 与 per-sink timeout。
 
 ### Changed
+- `Event.kind` 改为字符串（通用事件类型，不绑定具体业务域）。
+- 移除库内置的 `CODE_PM_NOTIFY_*` 环境变量解析（交由上层 adapter 负责）。
 
 ### Fixed

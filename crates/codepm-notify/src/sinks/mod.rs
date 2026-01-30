@@ -6,8 +6,8 @@ use std::pin::Pin;
 
 use crate::event::Event;
 
-pub use feishu::FeishuWebhookSink;
-pub use sound::SoundSink;
+pub use feishu::{FeishuWebhookConfig, FeishuWebhookSink};
+pub use sound::{SoundConfig, SoundSink};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 

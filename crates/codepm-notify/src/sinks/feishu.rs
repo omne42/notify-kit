@@ -1,6 +1,20 @@
 use crate::Event;
-use crate::config::FeishuConfig;
 use crate::sinks::{BoxFuture, Sink};
+
+#[derive(Debug, Clone)]
+pub struct FeishuWebhookConfig {
+    pub webhook_url: String,
+    pub timeout: std::time::Duration,
+}
+
+impl FeishuWebhookConfig {
+    pub fn new(webhook_url: impl Into<String>) -> Self {
+        Self {
+            webhook_url: webhook_url.into(),
+            timeout: std::time::Duration::from_secs(2),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct FeishuWebhookSink {
@@ -9,9 +23,9 @@ pub struct FeishuWebhookSink {
 }
 
 impl FeishuWebhookSink {
-    pub fn new(config: FeishuConfig) -> anyhow::Result<Self> {
+    pub fn new(config: FeishuWebhookConfig) -> anyhow::Result<Self> {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(2))
+            .timeout(config.timeout)
             .build()
             .map_err(|err| anyhow::anyhow!("build reqwest client: {err}"))?;
         Ok(Self {
@@ -91,13 +105,9 @@ mod tests {
 
     #[test]
     fn builds_expected_payload() {
-        let event = Event::new(
-            crate::EventKind::TurnCompleted,
-            crate::Severity::Success,
-            "done",
-        )
-        .with_body("ok")
-        .with_tag("thread_id", "t1");
+        let event = Event::new("turn_completed", crate::Severity::Success, "done")
+            .with_body("ok")
+            .with_tag("thread_id", "t1");
 
         let payload = FeishuWebhookSink::build_payload(&event);
         assert_eq!(payload["msg_type"].as_str().unwrap_or(""), "text");

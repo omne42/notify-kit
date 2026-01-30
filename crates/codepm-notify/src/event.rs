@@ -8,16 +8,9 @@ pub enum Severity {
     Error,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum EventKind {
-    TurnCompleted,
-    ApprovalRequested,
-    MessageReceived,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Event {
-    pub kind: EventKind,
+    pub kind: String,
     pub severity: Severity,
     pub title: String,
     pub body: Option<String>,
@@ -25,9 +18,9 @@ pub struct Event {
 }
 
 impl Event {
-    pub fn new(kind: EventKind, severity: Severity, title: impl Into<String>) -> Self {
+    pub fn new(kind: impl Into<String>, severity: Severity, title: impl Into<String>) -> Self {
         Self {
-            kind,
+            kind: kind.into(),
             severity,
             title: title.into(),
             body: None,

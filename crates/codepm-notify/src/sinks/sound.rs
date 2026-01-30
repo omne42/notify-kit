@@ -1,9 +1,13 @@
 use std::io::Write;
 
 use crate::Event;
-use crate::config::SoundConfig;
 use crate::event::Severity;
 use crate::sinks::{BoxFuture, Sink};
+
+#[derive(Debug, Clone)]
+pub struct SoundConfig {
+    pub command_argv: Option<Vec<String>>,
+}
 
 #[derive(Debug)]
 pub struct SoundSink {

@@ -2,9 +2,28 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::HubConfig;
-use crate::event::{Event, EventKind};
-use crate::sinks::{FeishuWebhookSink, Sink, SoundSink};
+use crate::event::Event;
+use crate::sinks::Sink;
+
+#[derive(Debug, Clone)]
+pub struct HubConfig {
+    /// Optional allow-list for event kinds.
+    ///
+    /// - `None`: allow all event kinds.
+    /// - `Some(set)`: only allow event kinds present in the set.
+    pub enabled_kinds: Option<BTreeSet<String>>,
+    /// Per-sink timeout to ensure notifications never block the caller.
+    pub per_sink_timeout: Duration,
+}
+
+impl Default for HubConfig {
+    fn default() -> Self {
+        Self {
+            enabled_kinds: None,
+            per_sink_timeout: Duration::from_secs(2),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct Hub {
@@ -12,65 +31,28 @@ pub struct Hub {
 }
 
 struct HubInner {
-    enabled_kinds: BTreeSet<EventKind>,
+    enabled_kinds: Option<BTreeSet<String>>,
     sinks: Vec<Arc<dyn Sink>>,
     per_sink_timeout: Duration,
 }
 
-#[derive(Debug)]
-pub struct HubInitError(anyhow::Error);
-
-impl std::fmt::Display for HubInitError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "init notify hub: {}", self.0)
-    }
-}
-
-impl std::error::Error for HubInitError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.0.as_ref())
-    }
-}
-
-impl From<anyhow::Error> for HubInitError {
-    fn from(value: anyhow::Error) -> Self {
-        Self(value)
-    }
-}
-
 impl Hub {
-    pub fn from_env() -> Result<Option<Self>, HubInitError> {
-        let Some(config) = HubConfig::from_env().map_err(HubInitError::from)? else {
-            return Ok(None);
-        };
-        let hub = Self::new(config)?;
-        Ok(Some(hub))
-    }
-
-    fn new(config: HubConfig) -> Result<Self, HubInitError> {
-        let mut sinks: Vec<Arc<dyn Sink>> = Vec::new();
-
-        if let Some(sound) = config.sound.clone() {
-            sinks.push(Arc::new(SoundSink::new(sound)));
-        }
-        if let Some(feishu) = config.feishu.clone() {
-            sinks.push(Arc::new(FeishuWebhookSink::new(feishu)?));
-        }
-
+    pub fn new(config: HubConfig, sinks: Vec<Arc<dyn Sink>>) -> Self {
         let inner = HubInner {
             enabled_kinds: config.enabled_kinds,
             sinks,
-            // Notifications must never block the main app; keep this aggressive.
-            per_sink_timeout: Duration::from_secs(2),
+            per_sink_timeout: config.per_sink_timeout,
         };
-        Ok(Self {
+        Self {
             inner: Arc::new(inner),
-        })
+        }
     }
 
     pub fn notify(&self, event: Event) {
-        if !self.inner.enabled_kinds.contains(&event.kind) {
-            return;
+        if let Some(enabled) = &self.inner.enabled_kinds {
+            if !enabled.contains(event.kind.as_str()) {
+                return;
+            }
         }
 
         let inner = self.inner.clone();
