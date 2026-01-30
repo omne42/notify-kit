@@ -7,7 +7,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 ## [Unreleased]
 
 ### Added
-- `codepm-notify` crate：提供 `Hub` + `Sink` 抽象。
+- `notify-kit` crate：提供 `Hub` + `Sink` 抽象。
 - `sound` sink：终端 bell / 自定义播放命令。
 - `feishu` sink：飞书 webhook（text 消息）。
 - `HubConfig`：支持可选 kind allow-list 与 per-sink timeout。

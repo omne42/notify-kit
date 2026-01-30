@@ -1,5 +1,5 @@
 [package]
-name = "codepm-notify"
+name = "notify-kit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

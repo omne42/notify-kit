@@ -1,4 +1,4 @@
-# codepm-notify
+# notify-kit
 
 一个轻量的通知 Hub（Rust），用于把任意事件推送到多个通知渠道（sinks）。
 
@@ -18,7 +18,7 @@
 
 ## 与 `codex_pm` 集成
 
-`codex_pm` 内的 `codepm-notify-adapter` 负责解析 `CODE_PM_NOTIFY_*` 并构造 Hub；`pm-app-server` 通过 feature `notify` 集成（默认关闭）。示例：
+`codex_pm` 内的 adapter 负责解析 `CODE_PM_NOTIFY_*` 并构造 Hub；`pm-app-server` 通过 feature `notify` 集成（默认关闭）。示例：
 
 ```bash
 cd ../codex_pm
