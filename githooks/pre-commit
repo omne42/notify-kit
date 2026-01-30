@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+if [[ -n "$branch" && "$branch" != "HEAD" ]]; then
+  ok=0
+  case "$branch" in
+    main|master) ok=1 ;;
+    feat/*|fix/*|docs/*|refactor/*|perf/*|test/*|chore/*|build/*|ci/*|revert/*) ok=1 ;;
+  esac
+  if [[ "$ok" -ne 1 ]]; then
+    cat >&2 <<EOF
+pre-commit: invalid branch name: $branch
+
+Branch must start with one of:
+  feat/, fix/, docs/, refactor/, perf/, test/, chore/, build/, ci/, revert/
+EOF
+    exit 1
+  fi
+fi
+
+staged_files="$(git diff --cached --name-only --diff-filter=ACMRD || true)"
+if [[ -z "${staged_files//[[:space:]]/}" ]]; then
+  exit 0
+fi
+
+has_changelog=0
+other_count=0
+while IFS= read -r path; do
+  [[ -z "$path" ]] && continue
+  if [[ "$path" == "CHANGELOG.md" ]]; then
+    has_changelog=1
+  else
+    other_count=$((other_count + 1))
+  fi
+done <<<"$staged_files"
+
+if [[ "$has_changelog" -ne 1 ]]; then
+  cat >&2 <<'EOF'
+pre-commit: CHANGELOG.md must be updated in the same commit.
+
+- Add an entry under [Unreleased] in CHANGELOG.md.
+- Stage it: git add CHANGELOG.md
+EOF
+  exit 1
+fi
+
+if [[ "$other_count" -eq 0 ]]; then
+  echo "pre-commit: refusing changelog-only commit; commit the actual change together with CHANGELOG.md." >&2
+  exit 1
+fi
+
+if [[ "${CODE_PM_ALLOW_CHANGELOG_RELEASE_EDIT:-}" != "1" ]]; then
+  head_changelog="$(git show HEAD:CHANGELOG.md 2>/dev/null || true)"
+  index_changelog="$(git show :CHANGELOG.md 2>/dev/null || true)"
+
+  if [[ -n "${head_changelog}" && -n "${index_changelog}" ]]; then
+    head_released="$(printf '%s\n' "${head_changelog}" | awk 'BEGIN{s=0} /^## \\[[0-9]/{s=1} s{print}')"
+    index_released="$(printf '%s\n' "${index_changelog}" | awk 'BEGIN{s=0} /^## \\[[0-9]/{s=1} s{print}')"
+
+    if [[ "${head_released}" != "${index_released}" ]]; then
+      cat >&2 <<'EOF'
+pre-commit: refusing to modify released CHANGELOG sections.
+
+Only edit entries under [Unreleased]. Released version sections (e.g. [0.x.y]) are immutable.
+
+If you are cutting a release and intentionally updating versioned sections, re-run with:
+  CODE_PM_ALLOW_CHANGELOG_RELEASE_EDIT=1 git commit ...
+EOF
+      exit 1
+    fi
+  fi
+fi
+
+# Rust file size heuristic: warn (do not block) when a single staged .rs file exceeds 1000 lines.
+while IFS= read -r path; do
+  [[ -z "$path" ]] && continue
+  case "$path" in
+    *.rs)
+      if git show ":$path" >/dev/null 2>&1; then
+        lines="$(git show ":$path" | wc -l | tr -d ' ')"
+        if [[ "$lines" -gt 1000 ]]; then
+          echo "pre-commit: warning: $path has $lines lines (>1000). Consider refactoring/splitting." >&2
+        fi
+      fi
+      ;;
+  esac
+done <<<"$staged_files"
+
+gate_script="$repo_root/scripts/gate.sh"
+if [[ ! -x "$gate_script" ]]; then
+  echo "pre-commit: missing gate script: $gate_script" >&2
+  exit 1
+fi
+
+"$gate_script"
