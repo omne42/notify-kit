@@ -7,10 +7,15 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 ## [Unreleased]
 
 ### Added
+- `Hub::try_notify`：当缺少 Tokio runtime 时返回错误（避免静默丢通知）。
+- `Hub::send(event).await`：提供可观测的发送结果（等待所有 sinks 完成/超时）。
 
 ### Changed
+- `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
 
 ### Fixed
+- `SoundSink`：外部命令会被回收（避免僵尸进程累积）。
+- `FeishuWebhookConfig`/`FeishuWebhookSink`：`Debug` 输出不再泄露完整 webhook URL。
 
 ## [0.1.0] - 2026-01-31
 

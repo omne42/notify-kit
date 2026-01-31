@@ -12,6 +12,33 @@
 - 可扩展：后续追加 email/discord/slack/tgbot/桌宠…只需要新增 sink
 - 不阻塞：通知发送失败/超时不会卡住主流程（每个 sink 有超时）
 
+## 用法
+
+`Hub::notify` 是 fire-and-forget：在 **Tokio runtime** 中 spawn 后台任务并立即返回。
+
+- 如果当前没有 Tokio runtime：`notify` 会丢弃通知并 `tracing::warn!`；可用 `Hub::try_notify` 检测。
+- 如果需要可观测结果：用 `Hub::send(event).await`（会等待所有 sinks 完成/超时）。
+
+最小示例（需要在 Tokio runtime 中调用）：
+
+```rust
+use std::sync::Arc;
+
+use notify_kit::{Event, Hub, HubConfig, Severity, SoundConfig, SoundSink};
+
+let hub = Hub::new(
+    HubConfig::default(),
+    vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))],
+);
+
+hub.notify(Event::new("turn_completed", Severity::Success, "done"));
+```
+
+## 安全提示
+
+- `SoundConfig.command_argv` 会执行外部命令；应视为 **受信任/本机配置**。
+- `FeishuWebhookSink` 会校验 webhook URL：仅允许 `https` + `open.feishu.cn` / `open.larksuite.com`，且不会在 `Debug`/错误信息中输出完整 URL。
+
 ## 配置（环境变量）
 
 本库不规定环境变量协议；配置应由上层应用负责（比如 integration 层解析 env，然后构造 sinks + Hub）。

@@ -45,10 +45,30 @@ impl SoundSink {
             .split_first()
             .ok_or_else(|| anyhow::anyhow!("sound command argv is empty"))?;
 
-        let _child = std::process::Command::new(program)
+        let mut child = std::process::Command::new(program)
             .args(args)
             .spawn()
             .map_err(|err| anyhow::anyhow!("spawn sound command {program}: {err}"))?;
+
+        let program = program.to_string();
+        std::thread::spawn(move || match child.wait() {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                tracing::warn!(
+                    sink = "sound",
+                    program = %program,
+                    status = ?status,
+                    "sound command exited non-zero"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    sink = "sound",
+                    program = %program,
+                    "wait sound command failed: {err}"
+                );
+            }
+        });
         Ok(())
     }
 }
