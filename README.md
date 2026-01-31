@@ -14,11 +14,11 @@
 
 ## 配置（环境变量）
 
-本库不规定环境变量协议；配置应由上层应用负责（比如 adapter 层解析 env，然后构造 sinks + Hub）。
+本库不规定环境变量协议；配置应由上层应用负责（比如 integration 层解析 env，然后构造 sinks + Hub）。
 
 ## 与 `codex_pm` 集成
 
-`codex_pm` 内的 adapter 负责解析 `CODE_PM_NOTIFY_*` 并构造 Hub；`pm-app-server` 通过 feature `notify` 集成（默认关闭）。示例：
+`codex_pm` 内的 notify integration 负责解析 `CODE_PM_NOTIFY_*` 并构造 Hub；`pm-app-server` 通过 feature `notify` 集成（默认关闭）。示例：
 
 ```bash
 cd ../codex_pm
