@@ -12,6 +12,11 @@
 - 可扩展：后续追加 email/discord/slack/tgbot/桌宠…只需要新增 sink
 - 不阻塞：通知发送失败/超时不会卡住主流程（每个 sink 有超时）
 
+## 文档
+
+- GitBook：`docs/README.md`（目录：`docs/SUMMARY.md`）
+- Rustdoc：`cargo doc -p notify-kit --open`
+
 ## 用法
 
 `Hub::notify` 是 fire-and-forget：在 **Tokio runtime** 中 spawn 后台任务并立即返回。

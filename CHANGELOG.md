@@ -12,6 +12,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 
 ### Changed
 - `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
+- Docs: add GitBook-style documentation under `docs/` and link from README.
 
 ### Fixed
 - `SoundSink`：外部命令会被回收（避免僵尸进程累积）。
