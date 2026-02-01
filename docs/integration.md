@@ -68,16 +68,16 @@ fn build_hub_from_env() -> anyhow::Result<Hub> {
 }
 ```
 
-## 与 `codex_pm` 的集成（示例）
+## 与 omne-agent 的集成（示例）
 
-`codex_pm` 内的 notify integration 负责解析 `CODE_PM_NOTIFY_*` 并构造 Hub。
+`omne-agent` 仓库（目录名为 `omne-agent/`）内的 `omne-agent-app-server` notify integration 负责解析 `OMNE_AGENT_NOTIFY_*` 并构造 Hub。
 
 ```bash
-cd ../codex_pm
+cd ../omne-agent
 
-export CODE_PM_NOTIFY_SOUND=1
-# export CODE_PM_NOTIFY_FEISHU_WEBHOOK_URL="..."
-# export CODE_PM_NOTIFY_EVENTS="turn_completed,approval_requested,message_received"
+export OMNE_AGENT_NOTIFY_SOUND=1
+# export OMNE_AGENT_NOTIFY_FEISHU_WEBHOOK_URL="..."
+# export OMNE_AGENT_NOTIFY_EVENTS="turn_completed,approval_requested,message_received"
 
-cargo run -p pm-app-server --features notify
+cargo run -p omne-agent-app-server --features notify
 ```

@@ -48,18 +48,18 @@ hub.notify(Event::new("turn_completed", Severity::Success, "done"));
 
 本库不规定环境变量协议；配置应由上层应用负责（比如 integration 层解析 env，然后构造 sinks + Hub）。
 
-## 与 `codex_pm` 集成
+## 与 omne-agent 集成
 
-`codex_pm` 内的 notify integration 负责解析 `CODE_PM_NOTIFY_*` 并构造 Hub；`pm-app-server` 通过 feature `notify` 集成（默认关闭）。示例：
+`omne-agent` 仓库（目录名为 `omne-agent/`）内的 `omne-agent-app-server` notify integration 负责解析 `OMNE_AGENT_NOTIFY_*` 并构造 Hub；通过 feature `notify` 集成（默认关闭）。示例：
 
 ```bash
-cd ../codex_pm
+cd ../omne-agent
 
-export CODE_PM_NOTIFY_SOUND=1
-# export CODE_PM_NOTIFY_FEISHU_WEBHOOK_URL="..."
-# export CODE_PM_NOTIFY_EVENTS="turn_completed,approval_requested,message_received"
+export OMNE_AGENT_NOTIFY_SOUND=1
+# export OMNE_AGENT_NOTIFY_FEISHU_WEBHOOK_URL="..."
+# export OMNE_AGENT_NOTIFY_EVENTS="turn_completed,approval_requested,message_received"
 
-cargo run -p pm-app-server --features notify
+cargo run -p omne-agent-app-server --features notify
 ```
 
 ## 开发

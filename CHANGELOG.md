@@ -28,6 +28,6 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 
 ### Changed
 - `Event.kind` 改为字符串（通用事件类型，不绑定具体业务域）。
-- 移除库内置的 `CODE_PM_NOTIFY_*` 环境变量解析（交由上层 integration 负责）。
+- 移除库内置的通知环境变量解析（交由上层 integration 负责）。
 
 ### Fixed

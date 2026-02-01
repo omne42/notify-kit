@@ -52,7 +52,7 @@ if [[ "$other_count" -eq 0 ]]; then
   exit 1
 fi
 
-if [[ "${CODE_PM_ALLOW_CHANGELOG_RELEASE_EDIT:-}" != "1" ]]; then
+if [[ "${NOTIFY_KIT_ALLOW_CHANGELOG_RELEASE_EDIT:-}" != "1" ]]; then
   head_changelog="$(git show HEAD:CHANGELOG.md 2>/dev/null || true)"
   index_changelog="$(git show :CHANGELOG.md 2>/dev/null || true)"
 
@@ -67,7 +67,7 @@ pre-commit: refusing to modify released CHANGELOG sections.
 Only edit entries under [Unreleased]. Released version sections (e.g. [0.x.y]) are immutable.
 
 If you are cutting a release and intentionally updating versioned sections, re-run with:
-  CODE_PM_ALLOW_CHANGELOG_RELEASE_EDIT=1 git commit ...
+  NOTIFY_KIT_ALLOW_CHANGELOG_RELEASE_EDIT=1 git commit ...
 EOF
       exit 1
     fi
