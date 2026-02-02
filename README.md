@@ -27,6 +27,12 @@
 - GitBook：`docs/README.md`（目录：`docs/SUMMARY.md`）
 - Rustdoc：`cargo doc -p notify-kit --open`
 
+## Bots（上层集成示例）
+
+本仓库的核心是 Rust 通知库（`Hub` + `sinks`）。另外也提供少量“上层 bot/集成示例”：
+
+- `bots/`（见 `bots/README.md`）
+
 ## 用法
 
 `Hub::notify` 是 fire-and-forget：在 **Tokio runtime** 中 spawn 后台任务并立即返回。

@@ -1,0 +1,12 @@
+{
+  "name": "opencode-slack-bot",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node ./src/index.mjs"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "latest",
+    "@slack/bolt": "^3.22.0"
+  }
+}

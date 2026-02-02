@@ -12,6 +12,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `Hub::new_with_inflight_limit`：限制 `notify()` 的后台并发，超限会丢弃并 warning（背压/防 DoS）。
 - `FeishuWebhookConfig`：新增 `max_chars`/`with_max_chars` 与 `enforce_public_ip`/`with_public_ip_check`。
 - `GenericWebhookConfig::new_strict` / `GenericWebhookSink::new_strict`：提供更严格的 SSRF 防护（强制 host allow-list + path 前缀 + 公网 IP 校验）。
+- `bots/opencode-slack`：OpenCode 风格的 Slack Socket Mode bot 示例（thread → session）。
 - New sinks:
   - `SlackWebhookSink`：Slack Incoming Webhook（text）。
   - `DiscordWebhookSink`：Discord webhook（text）。
