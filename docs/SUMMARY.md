@@ -10,6 +10,7 @@
 * [内置 Sinks](sinks/README.md)
   * [SoundSink](sinks/sound.md)
   * [FeishuWebhookSink](sinks/feishu.md)
+  * [GitHubCommentSink](sinks/github.md)
   * [SlackWebhookSink](sinks/slack.md)
   * [DiscordWebhookSink](sinks/discord.md)
   * [TelegramBotSink](sinks/telegram.md)

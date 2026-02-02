@@ -16,6 +16,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
   - `TelegramBotSink`：Telegram Bot API（sendMessage）。
   - `DingTalkWebhookSink`：钉钉群机器人 webhook（text，可选签名）。
   - `WeComWebhookSink`：企业微信群机器人 webhook（text）。
+  - `GitHubCommentSink`：GitHub Issue/PR 评论（text）。
 - `FeishuWebhookSink::new_with_secret`：支持飞书群机器人 webhook 签名（timestamp/sign）。
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：可选启用 DNS 公网 IP 校验。
 

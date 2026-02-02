@@ -41,6 +41,13 @@ Webhook 发送本质是“服务端发起 HTTP 请求”。如果 URL 可被不�
 
 注意：这是一个“更严格、更保守”的策略；在无网络/DNS 不可用时也可能导致构造失败。
 
+## GitHub API（GitHubCommentSink）
+
+`GitHubCommentSink` 使用 GitHub token 调用 `api.github.com`：
+
+- token 属于敏感信息：不要写入日志/错误信息/Debug 输出
+- 建议用最小权限的 token（只授予目标仓库的必要写权限）
+
 ## DoS / 噪音控制
 
 为了避免异常大消息或事件洪泛导致内存/网络放大，本库内置 sinks 会对内容做截断与上限：

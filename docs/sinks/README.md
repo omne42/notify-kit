@@ -6,6 +6,7 @@
 
 - `sound`：终端 bell / 外部命令
 - `feishu`：飞书 webhook
+- `github`：GitHub 评论（Issues/PR）
 - `slack`：Slack Incoming Webhook
 - `discord`：Discord webhook
 - `telegram`：Telegram Bot API

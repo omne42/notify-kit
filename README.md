@@ -6,6 +6,7 @@
 
 - `sound`：终端 bell（默认）或自定义播放命令
 - `feishu`：飞书群机器人 webhook（text 消息，可选签名）
+- `github`：GitHub Issues/PR 评论（text）
 - `slack`：Slack Incoming Webhook（text 消息）
 - `discord`：Discord webhook（text 消息）
 - `telegram`：Telegram Bot API（sendMessage）
