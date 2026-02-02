@@ -11,10 +11,7 @@ pub(crate) fn build_http_client(timeout: Duration) -> anyhow::Result<reqwest::Cl
         .map_err(|err| anyhow::anyhow!("build reqwest client: {err}"))
 }
 
-pub(crate) fn parse_and_validate_https_url(
-    url_str: &str,
-    allowed_hosts: &[&str],
-) -> anyhow::Result<reqwest::Url> {
+pub(crate) fn parse_and_validate_https_url_basic(url_str: &str) -> anyhow::Result<reqwest::Url> {
     let url = reqwest::Url::parse(url_str).map_err(|err| anyhow::anyhow!("invalid url: {err}"))?;
 
     if url.scheme() != "https" {
@@ -31,17 +28,29 @@ pub(crate) fn parse_and_validate_https_url(
         return Err(anyhow::anyhow!("url host is not allowed"));
     }
 
+    if let Some(port) = url.port() {
+        if port != 443 {
+            return Err(anyhow::anyhow!("url port is not allowed"));
+        }
+    }
+
+    Ok(url)
+}
+
+pub(crate) fn parse_and_validate_https_url(
+    url_str: &str,
+    allowed_hosts: &[&str],
+) -> anyhow::Result<reqwest::Url> {
+    let url = parse_and_validate_https_url_basic(url_str)?;
+    let Some(host) = url.host_str() else {
+        return Err(anyhow::anyhow!("url must have a host"));
+    };
+
     if !allowed_hosts
         .iter()
         .any(|allowed| host.eq_ignore_ascii_case(allowed))
     {
         return Err(anyhow::anyhow!("url host is not allowed"));
-    }
-
-    if let Some(port) = url.port() {
-        if port != 443 {
-            return Err(anyhow::anyhow!("url port is not allowed"));
-        }
     }
 
     Ok(url)
@@ -104,6 +113,15 @@ pub(crate) fn validate_url_resolves_to_public_ip(url: &reqwest::Url) -> anyhow::
         return Err(anyhow::anyhow!("dns lookup failed"));
     }
 
+    Ok(())
+}
+
+pub(crate) async fn validate_url_resolves_to_public_ip_async(
+    url: reqwest::Url,
+) -> anyhow::Result<()> {
+    tokio::task::spawn_blocking(move || validate_url_resolves_to_public_ip(&url))
+        .await
+        .map_err(|_| anyhow::anyhow!("dns lookup failed"))??;
     Ok(())
 }
 

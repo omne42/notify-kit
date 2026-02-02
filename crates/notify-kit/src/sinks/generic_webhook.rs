@@ -1,0 +1,225 @@
+use std::time::Duration;
+
+use crate::Event;
+use crate::sinks::http::{
+    build_http_client, parse_and_validate_https_url_basic, redact_url, redact_url_str,
+    sanitize_reqwest_error, validate_url_path_prefix, validate_url_resolves_to_public_ip_async,
+};
+use crate::sinks::text::{TextLimits, format_event_text_limited};
+use crate::sinks::{BoxFuture, Sink};
+
+#[non_exhaustive]
+#[derive(Clone)]
+pub struct GenericWebhookConfig {
+    pub url: String,
+    pub payload_field: String,
+    pub timeout: Duration,
+    pub max_chars: usize,
+    pub enforce_public_ip: bool,
+    pub path_prefix: Option<String>,
+    pub allowed_hosts: Vec<String>,
+}
+
+impl std::fmt::Debug for GenericWebhookConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GenericWebhookConfig")
+            .field("url", &redact_url_str(&self.url))
+            .field("payload_field", &self.payload_field)
+            .field("timeout", &self.timeout)
+            .field("max_chars", &self.max_chars)
+            .field("enforce_public_ip", &self.enforce_public_ip)
+            .field("path_prefix", &self.path_prefix)
+            .field("allowed_hosts", &self.allowed_hosts)
+            .finish()
+    }
+}
+
+impl GenericWebhookConfig {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            payload_field: "text".to_string(),
+            timeout: Duration::from_secs(2),
+            max_chars: 16 * 1024,
+            enforce_public_ip: true,
+            path_prefix: None,
+            allowed_hosts: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_payload_field(mut self, payload_field: impl Into<String>) -> Self {
+        self.payload_field = payload_field.into();
+        self
+    }
+
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_chars(mut self, max_chars: usize) -> Self {
+        self.max_chars = max_chars;
+        self
+    }
+
+    #[must_use]
+    pub fn with_public_ip_check(mut self, enforce_public_ip: bool) -> Self {
+        self.enforce_public_ip = enforce_public_ip;
+        self
+    }
+
+    #[must_use]
+    pub fn with_path_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.path_prefix = Some(prefix.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_allowed_hosts(mut self, allowed_hosts: Vec<String>) -> Self {
+        self.allowed_hosts = allowed_hosts;
+        self
+    }
+}
+
+pub struct GenericWebhookSink {
+    url: reqwest::Url,
+    payload_field: String,
+    client: reqwest::Client,
+    max_chars: usize,
+    enforce_public_ip: bool,
+}
+
+impl std::fmt::Debug for GenericWebhookSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GenericWebhookSink")
+            .field("url", &redact_url(&self.url))
+            .field("payload_field", &self.payload_field)
+            .field("max_chars", &self.max_chars)
+            .field("enforce_public_ip", &self.enforce_public_ip)
+            .finish_non_exhaustive()
+    }
+}
+
+impl GenericWebhookSink {
+    pub fn new(config: GenericWebhookConfig) -> anyhow::Result<Self> {
+        if config.payload_field.trim().is_empty() {
+            return Err(anyhow::anyhow!(
+                "generic webhook payload_field must not be empty"
+            ));
+        }
+
+        let url = parse_and_validate_https_url_basic(&config.url)?;
+        if let Some(prefix) = config.path_prefix.as_deref() {
+            validate_url_path_prefix(&url, prefix)?;
+        }
+
+        if !config.allowed_hosts.is_empty() {
+            let Some(host) = url.host_str() else {
+                return Err(anyhow::anyhow!("url must have a host"));
+            };
+            let allowed = config
+                .allowed_hosts
+                .iter()
+                .any(|h| host.eq_ignore_ascii_case(h));
+            if !allowed {
+                return Err(anyhow::anyhow!("url host is not allowed"));
+            }
+        }
+
+        let client = build_http_client(config.timeout)?;
+        Ok(Self {
+            url,
+            payload_field: config.payload_field,
+            client,
+            max_chars: config.max_chars,
+            enforce_public_ip: config.enforce_public_ip,
+        })
+    }
+
+    fn build_payload(event: &Event, payload_field: &str, max_chars: usize) -> serde_json::Value {
+        let text = format_event_text_limited(event, TextLimits::new(max_chars));
+        serde_json::json!({ payload_field: text })
+    }
+}
+
+impl Sink for GenericWebhookSink {
+    fn name(&self) -> &'static str {
+        "webhook"
+    }
+
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            if self.enforce_public_ip {
+                validate_url_resolves_to_public_ip_async(self.url.clone()).await?;
+            }
+
+            let payload = Self::build_payload(event, &self.payload_field, self.max_chars);
+
+            let resp = self
+                .client
+                .post(self.url.clone())
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generic webhook request failed ({})",
+                        sanitize_reqwest_error(&err)
+                    )
+                })?;
+
+            let status = resp.status();
+            if status.is_success() {
+                return Ok(());
+            }
+
+            Err(anyhow::anyhow!(
+                "generic webhook http error: {status} (response body omitted)"
+            ))
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Severity;
+
+    #[test]
+    fn builds_expected_payload() {
+        let event = Event::new("turn_completed", Severity::Success, "done")
+            .with_body("ok")
+            .with_tag("thread_id", "t1");
+
+        let payload = GenericWebhookSink::build_payload(&event, "content", 16 * 1024);
+        let text = payload["content"].as_str().unwrap_or("");
+        assert!(text.contains("done"));
+        assert!(text.contains("ok"));
+        assert!(text.contains("thread_id=t1"));
+    }
+
+    #[test]
+    fn rejects_non_https_url() {
+        let cfg = GenericWebhookConfig::new("http://example.com/webhook");
+        let err = GenericWebhookSink::new(cfg).expect_err("expected invalid url");
+        assert!(err.to_string().contains("https"), "{err:#}");
+    }
+
+    #[test]
+    fn rejects_empty_payload_field() {
+        let cfg = GenericWebhookConfig::new("https://example.com/webhook").with_payload_field(" ");
+        let err = GenericWebhookSink::new(cfg).expect_err("expected invalid config");
+        assert!(err.to_string().contains("payload_field"), "{err:#}");
+    }
+
+    #[test]
+    fn debug_redacts_url() {
+        let cfg = GenericWebhookConfig::new("https://example.com/webhook?secret=x");
+        let cfg_dbg = format!("{cfg:?}");
+        assert!(!cfg_dbg.contains("secret=x"), "{cfg_dbg}");
+        assert!(cfg_dbg.contains("<redacted>"), "{cfg_dbg}");
+    }
+}

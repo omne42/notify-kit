@@ -6,6 +6,7 @@ use crate::sinks::http::{
     DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
     read_json_body_limited, redact_url, redact_url_str, sanitize_reqwest_error,
     validate_url_path_prefix, validate_url_resolves_to_public_ip,
+    validate_url_resolves_to_public_ip_async,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
@@ -40,6 +41,7 @@ pub struct FeishuWebhookSink {
     webhook_url: reqwest::Url,
     client: reqwest::Client,
     secret: Option<String>,
+    enforce_public_ip: bool,
 }
 
 impl std::fmt::Debug for FeishuWebhookSink {
@@ -47,17 +49,18 @@ impl std::fmt::Debug for FeishuWebhookSink {
         f.debug_struct("FeishuWebhookSink")
             .field("webhook_url", &redact_url(&self.webhook_url))
             .field("secret", &self.secret.as_ref().map(|_| "<redacted>"))
+            .field("enforce_public_ip", &self.enforce_public_ip)
             .finish_non_exhaustive()
     }
 }
 
 impl FeishuWebhookSink {
     pub fn new(config: FeishuWebhookConfig) -> anyhow::Result<Self> {
-        Self::new_internal(config, None, false)
+        Self::new_internal(config, None, true, false)
     }
 
     pub fn new_strict(config: FeishuWebhookConfig) -> anyhow::Result<Self> {
-        Self::new_internal(config, None, true)
+        Self::new_internal(config, None, true, true)
     }
 
     pub fn new_with_secret(
@@ -68,7 +71,7 @@ impl FeishuWebhookSink {
         if secret.trim().is_empty() {
             return Err(anyhow::anyhow!("feishu secret must not be empty"));
         }
-        Self::new_internal(config, Some(secret), false)
+        Self::new_internal(config, Some(secret), true, false)
     }
 
     pub fn new_with_secret_strict(
@@ -79,20 +82,21 @@ impl FeishuWebhookSink {
         if secret.trim().is_empty() {
             return Err(anyhow::anyhow!("feishu secret must not be empty"));
         }
-        Self::new_internal(config, Some(secret), true)
+        Self::new_internal(config, Some(secret), true, true)
     }
 
     fn new_internal(
         config: FeishuWebhookConfig,
         secret: Option<String>,
         enforce_public_ip: bool,
+        validate_public_ip_at_construction: bool,
     ) -> anyhow::Result<Self> {
         let webhook_url = parse_and_validate_https_url(
             &config.webhook_url,
             &["open.feishu.cn", "open.larksuite.com"],
         )?;
         validate_url_path_prefix(&webhook_url, "/open-apis/bot/v2/hook/")?;
-        if enforce_public_ip {
+        if validate_public_ip_at_construction && enforce_public_ip {
             validate_url_resolves_to_public_ip(&webhook_url)?;
         }
         let client = build_http_client(config.timeout)?;
@@ -100,6 +104,7 @@ impl FeishuWebhookSink {
             webhook_url,
             client,
             secret,
+            enforce_public_ip,
         })
     }
 
@@ -133,6 +138,9 @@ impl Sink for FeishuWebhookSink {
 
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
+            if self.enforce_public_ip {
+                validate_url_resolves_to_public_ip_async(self.webhook_url.clone()).await?;
+            }
             let (timestamp, sign) = if let Some(secret) = self.secret.as_deref() {
                 let timestamp = SystemTime::now()
                     .duration_since(UNIX_EPOCH)

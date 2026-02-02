@@ -12,7 +12,7 @@ use notify_kit::{DiscordWebhookConfig, DiscordWebhookSink};
 let cfg = DiscordWebhookConfig::new("https://discord.com/api/webhooks/xxx")
     .with_timeout(Duration::from_secs(2))
     .with_max_chars(2000)
-    // 可选：启用更严格的 DNS 公网 IP 校验（可能导致无网络时构造失败）
+    // 可选：关闭 DNS 公网 IP 校验（默认开启；无网络/DNS 不可用时可能导致发送失败）
     .with_public_ip_check(false);
 
 let sink = DiscordWebhookSink::new(cfg)?;

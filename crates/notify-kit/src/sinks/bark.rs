@@ -1,0 +1,216 @@
+use std::time::Duration;
+
+use crate::Event;
+use crate::sinks::http::{
+    build_http_client, parse_and_validate_https_url, redact_url, sanitize_reqwest_error,
+    validate_url_path_prefix, validate_url_resolves_to_public_ip_async,
+};
+use crate::sinks::text::{TextLimits, format_event_body_and_tags_limited, truncate_chars};
+use crate::sinks::{BoxFuture, Sink};
+
+const BARK_ALLOWED_HOSTS: [&str; 1] = ["api.day.app"];
+
+#[non_exhaustive]
+#[derive(Clone)]
+pub struct BarkConfig {
+    pub device_key: String,
+    pub group: Option<String>,
+    pub timeout: Duration,
+    pub max_chars: usize,
+    pub enforce_public_ip: bool,
+}
+
+impl std::fmt::Debug for BarkConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BarkConfig")
+            .field("device_key", &"<redacted>")
+            .field("group", &self.group)
+            .field("timeout", &self.timeout)
+            .field("max_chars", &self.max_chars)
+            .field("enforce_public_ip", &self.enforce_public_ip)
+            .finish()
+    }
+}
+
+impl BarkConfig {
+    pub fn new(device_key: impl Into<String>) -> Self {
+        Self {
+            device_key: device_key.into(),
+            group: None,
+            timeout: Duration::from_secs(2),
+            max_chars: 8 * 1024,
+            enforce_public_ip: true,
+        }
+    }
+
+    #[must_use]
+    pub fn with_group(mut self, group: impl Into<String>) -> Self {
+        self.group = Some(group.into());
+        self
+    }
+
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_chars(mut self, max_chars: usize) -> Self {
+        self.max_chars = max_chars;
+        self
+    }
+
+    #[must_use]
+    pub fn with_public_ip_check(mut self, enforce_public_ip: bool) -> Self {
+        self.enforce_public_ip = enforce_public_ip;
+        self
+    }
+}
+
+pub struct BarkSink {
+    api_url: reqwest::Url,
+    device_key: String,
+    group: Option<String>,
+    client: reqwest::Client,
+    max_chars: usize,
+    enforce_public_ip: bool,
+}
+
+impl std::fmt::Debug for BarkSink {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BarkSink")
+            .field("api_url", &redact_url(&self.api_url))
+            .field("device_key", &"<redacted>")
+            .field("group", &self.group)
+            .field("max_chars", &self.max_chars)
+            .field("enforce_public_ip", &self.enforce_public_ip)
+            .finish_non_exhaustive()
+    }
+}
+
+impl BarkSink {
+    pub fn new(config: BarkConfig) -> anyhow::Result<Self> {
+        if config.device_key.trim().is_empty() {
+            return Err(anyhow::anyhow!("bark device_key must not be empty"));
+        }
+
+        let api_url =
+            parse_and_validate_https_url("https://api.day.app/push", &BARK_ALLOWED_HOSTS)?;
+        validate_url_path_prefix(&api_url, "/push")?;
+
+        let client = build_http_client(config.timeout)?;
+        Ok(Self {
+            api_url,
+            device_key: config.device_key,
+            group: config.group,
+            client,
+            max_chars: config.max_chars,
+            enforce_public_ip: config.enforce_public_ip,
+        })
+    }
+
+    fn build_payload(
+        event: &Event,
+        device_key: &str,
+        group: Option<&str>,
+        max_chars: usize,
+    ) -> serde_json::Value {
+        let title = truncate_chars(&event.title, 256);
+        let body = format_event_body_and_tags_limited(event, TextLimits::new(max_chars));
+
+        let mut obj = serde_json::Map::new();
+        obj.insert("device_key".to_string(), serde_json::json!(device_key));
+        obj.insert("title".to_string(), serde_json::json!(title));
+        obj.insert("body".to_string(), serde_json::json!(body));
+        if let Some(group) = group {
+            let group = group.trim();
+            if !group.is_empty() {
+                obj.insert("group".to_string(), serde_json::json!(group));
+            }
+        }
+        serde_json::Value::Object(obj)
+    }
+}
+
+impl Sink for BarkSink {
+    fn name(&self) -> &'static str {
+        "bark"
+    }
+
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            if self.enforce_public_ip {
+                validate_url_resolves_to_public_ip_async(self.api_url.clone()).await?;
+            }
+
+            let payload = Self::build_payload(
+                event,
+                &self.device_key,
+                self.group.as_deref(),
+                self.max_chars,
+            );
+
+            let resp = self
+                .client
+                .post(self.api_url.clone())
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!("bark request failed ({})", sanitize_reqwest_error(&err))
+                })?;
+
+            let status = resp.status();
+            if status.is_success() {
+                return Ok(());
+            }
+
+            Err(anyhow::anyhow!(
+                "bark http error: {status} (response body omitted)"
+            ))
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Severity;
+
+    #[test]
+    fn builds_expected_payload() {
+        let event = Event::new("turn_completed", Severity::Success, "done")
+            .with_body("ok")
+            .with_tag("thread_id", "t1");
+
+        let payload = BarkSink::build_payload(&event, "k", Some("g"), 8 * 1024);
+        assert_eq!(payload["device_key"].as_str().unwrap_or(""), "k");
+        assert_eq!(payload["title"].as_str().unwrap_or(""), "done");
+        let body = payload["body"].as_str().unwrap_or("");
+        assert!(body.contains("ok"));
+        assert!(body.contains("thread_id=t1"));
+        assert_eq!(payload["group"].as_str().unwrap_or(""), "g");
+    }
+
+    #[test]
+    fn debug_redacts_device_key() {
+        let cfg = BarkConfig::new("secret_key");
+        let cfg_dbg = format!("{cfg:?}");
+        assert!(!cfg_dbg.contains("secret_key"), "{cfg_dbg}");
+        assert!(cfg_dbg.contains("<redacted>"), "{cfg_dbg}");
+
+        let sink = BarkSink::new(cfg).expect("build sink");
+        let sink_dbg = format!("{sink:?}");
+        assert!(!sink_dbg.contains("secret_key"), "{sink_dbg}");
+        assert!(sink_dbg.contains("api.day.app"), "{sink_dbg}");
+        assert!(sink_dbg.contains("<redacted>"), "{sink_dbg}");
+    }
+
+    #[test]
+    fn rejects_empty_device_key() {
+        let cfg = BarkConfig::new("   ");
+        let err = BarkSink::new(cfg).expect_err("expected invalid config");
+        assert!(err.to_string().contains("device_key"), "{err:#}");
+    }
+}

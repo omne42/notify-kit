@@ -17,12 +17,17 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
   - `DingTalkWebhookSink`：钉钉群机器人 webhook（text，可选签名）。
   - `WeComWebhookSink`：企业微信群机器人 webhook（text）。
   - `GitHubCommentSink`：GitHub Issue/PR 评论（text）。
+  - `ServerChanSink`：Server酱（ServerChan）推送（text）。
+  - `PushPlusSink`：PushPlus 推送（text）。
+  - `BarkSink`：Bark 推送（text）。
+  - `GenericWebhookSink`：通用 JSON webhook（默认 `{text: ...}`）。
 - `FeishuWebhookSink::new_with_secret`：支持飞书群机器人 webhook 签名（timestamp/sign）。
-- `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：可选启用 DNS 公网 IP 校验。
+- `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
 - `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
 - All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
+- Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
 - Docs: add GitBook-style documentation under `docs/` and link from README.
 
 ### Fixed

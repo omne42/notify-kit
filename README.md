@@ -10,6 +10,10 @@
 - `slack`：Slack Incoming Webhook（text 消息）
 - `discord`：Discord webhook（text 消息）
 - `telegram`：Telegram Bot API（sendMessage）
+- `serverchan`：Server酱（ServerChan）推送（text）
+- `pushplus`：PushPlus 推送（text）
+- `bark`：Bark 推送（text）
+- `webhook`：通用 JSON webhook（`{text: ...}` 或自定义字段）
 - `dingtalk`：钉钉群机器人 webhook（text 消息，可选签名）
 - `wecom`：企业微信群机器人 webhook（text 消息）
 

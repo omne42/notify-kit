@@ -32,64 +32,76 @@ impl TextLimits {
     }
 }
 
-pub(crate) fn format_event_text_limited(event: &Event, limits: TextLimits) -> String {
-    struct LimitedChars {
-        max: usize,
-        out: Vec<char>,
-        truncated: bool,
+struct LimitedChars {
+    max: usize,
+    out: Vec<char>,
+    truncated: bool,
+}
+
+impl LimitedChars {
+    fn new(max: usize) -> Self {
+        Self {
+            max,
+            out: Vec::new(),
+            truncated: false,
+        }
     }
 
-    impl LimitedChars {
-        fn new(max: usize) -> Self {
-            Self {
-                max,
-                out: Vec::new(),
-                truncated: false,
-            }
-        }
+    fn is_empty(&self) -> bool {
+        self.out.is_empty()
+    }
 
-        fn push_char(&mut self, ch: char) {
-            if self.truncated || self.max == 0 {
-                return;
-            }
+    fn push_char(&mut self, ch: char) {
+        if self.truncated || self.max == 0 {
+            return;
+        }
+        if self.out.len() >= self.max {
+            self.truncated = true;
+            return;
+        }
+        self.out.push(ch);
+    }
+
+    fn push_str(&mut self, s: &str) {
+        if self.truncated || self.max == 0 {
+            return;
+        }
+        for ch in s.chars() {
             if self.out.len() >= self.max {
                 self.truncated = true;
-                return;
+                break;
             }
             self.out.push(ch);
         }
-
-        fn push_str(&mut self, s: &str) {
-            if self.truncated || self.max == 0 {
-                return;
-            }
-            for ch in s.chars() {
-                if self.out.len() >= self.max {
-                    self.truncated = true;
-                    break;
-                }
-                self.out.push(ch);
-            }
-        }
-
-        fn finish(mut self) -> String {
-            if self.truncated && self.max > 3 {
-                self.out.truncate(self.max - 3);
-                self.out.extend(['.', '.', '.']);
-            }
-            self.out.into_iter().collect()
-        }
     }
 
+    fn finish(mut self) -> String {
+        if self.truncated && self.max > 3 {
+            self.out.truncate(self.max - 3);
+            self.out.extend(['.', '.', '.']);
+        }
+        self.out.into_iter().collect()
+    }
+}
+
+fn format_event_text_parts_limited(
+    event: &Event,
+    limits: TextLimits,
+    include_title: bool,
+) -> String {
     let mut out = LimitedChars::new(limits.max_chars);
 
-    let title = truncate_chars(&event.title, limits.max_title_chars);
-    out.push_str(&title);
+    if include_title {
+        let title = truncate_chars(&event.title, limits.max_title_chars);
+        out.push_str(&title);
+    }
 
     if let Some(body) = event.body.as_deref() {
         let body = body.trim();
         if !body.is_empty() {
-            out.push_char('\n');
+            if !out.is_empty() {
+                out.push_char('\n');
+            }
             let body = truncate_chars(body, limits.max_body_chars);
             out.push_str(&body);
         }
@@ -99,7 +111,9 @@ pub(crate) fn format_event_text_limited(event: &Event, limits: TextLimits) -> St
         if idx >= limits.max_tags {
             break;
         }
-        out.push_char('\n');
+        if !out.is_empty() {
+            out.push_char('\n');
+        }
         let key = truncate_chars(k, limits.max_tag_key_chars);
         out.push_str(&key);
         out.push_char('=');
@@ -108,6 +122,14 @@ pub(crate) fn format_event_text_limited(event: &Event, limits: TextLimits) -> St
     }
 
     out.finish()
+}
+
+pub(crate) fn format_event_text_limited(event: &Event, limits: TextLimits) -> String {
+    format_event_text_parts_limited(event, limits, true)
+}
+
+pub(crate) fn format_event_body_and_tags_limited(event: &Event, limits: TextLimits) -> String {
+    format_event_text_parts_limited(event, limits, false)
 }
 
 pub(crate) fn truncate_chars(input: &str, max_chars: usize) -> String {

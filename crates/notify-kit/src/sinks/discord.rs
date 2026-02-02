@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::Event;
 use crate::sinks::http::{
     build_http_client, parse_and_validate_https_url, redact_url, redact_url_str,
-    sanitize_reqwest_error, validate_url_path_prefix, validate_url_resolves_to_public_ip,
+    sanitize_reqwest_error, validate_url_path_prefix, validate_url_resolves_to_public_ip_async,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
@@ -36,7 +36,7 @@ impl DiscordWebhookConfig {
             webhook_url: webhook_url.into(),
             timeout: Duration::from_secs(2),
             max_chars: 2000,
-            enforce_public_ip: false,
+            enforce_public_ip: true,
         }
     }
 
@@ -63,6 +63,7 @@ pub struct DiscordWebhookSink {
     webhook_url: reqwest::Url,
     client: reqwest::Client,
     max_chars: usize,
+    enforce_public_ip: bool,
 }
 
 impl std::fmt::Debug for DiscordWebhookSink {
@@ -79,14 +80,12 @@ impl DiscordWebhookSink {
         let webhook_url =
             parse_and_validate_https_url(&config.webhook_url, &DISCORD_ALLOWED_HOSTS)?;
         validate_url_path_prefix(&webhook_url, "/api/webhooks/")?;
-        if config.enforce_public_ip {
-            validate_url_resolves_to_public_ip(&webhook_url)?;
-        }
         let client = build_http_client(config.timeout)?;
         Ok(Self {
             webhook_url,
             client,
             max_chars: config.max_chars,
+            enforce_public_ip: config.enforce_public_ip,
         })
     }
 
@@ -103,6 +102,9 @@ impl Sink for DiscordWebhookSink {
 
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
+            if self.enforce_public_ip {
+                validate_url_resolves_to_public_ip_async(self.webhook_url.clone()).await?;
+            }
             let payload = Self::build_payload(event, self.max_chars);
 
             let resp = self

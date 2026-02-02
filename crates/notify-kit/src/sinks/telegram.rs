@@ -5,7 +5,7 @@ use crate::sinks::http::{
     DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, read_json_body_limited, redact_url,
     sanitize_reqwest_error,
 };
-use crate::sinks::text::{TextLimits, format_event_text_limited};
+use crate::sinks::text::{TextLimits, format_event_text_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
 
 const TELEGRAM_API_BASE: &str = "https://api.telegram.org";
@@ -141,9 +141,22 @@ impl Sink for TelegramBotSink {
             }
 
             let code = body["error_code"].as_i64();
+            let description = body["description"].as_str().unwrap_or("");
+            let description = truncate_chars(description, 200);
             if let Some(code) = code {
+                if !description.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "telegram api error: {code}, description={description} (response body omitted)"
+                    ));
+                }
                 return Err(anyhow::anyhow!(
                     "telegram api error: {code} (response body omitted)"
+                ));
+            }
+
+            if !description.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "telegram api error: description={description} (response body omitted)"
                 ));
             }
 

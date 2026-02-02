@@ -35,11 +35,14 @@ Webhook 发送本质是“服务端发起 HTTP 请求”。如果 URL 可被不�
 - **校验 URL path 前缀**（避免误配到同域其它 endpoint）
 - **错误信息保持低敏感**（不输出 body、不输出完整 URL）
 
-### 可选：DNS 解析结果必须是公网 IP
+### DNS 解析结果必须是公网 IP（默认启用）
 
-如果你担心 DNS 污染 / 内网解析等风险，部分 sinks 提供可选开关：在构造 sink 时做一次 DNS 解析校验（解析到私网/loopback/link-local 会拒绝）。
+为降低 DNS 污染 / DNS rebinding / 内网解析等风险，内置 HTTP sinks 默认会在发送前做一次 DNS 解析校验：
 
-注意：这是一个“更严格、更保守”的策略；在无网络/DNS 不可用时也可能导致构造失败。
+- 若解析到私网/loopback/link-local，会拒绝发送
+- 可通过各 sink 的 `with_public_ip_check(false)` 关闭（Feishu 的 `*_strict` 额外会在构造时也校验一次）
+
+注意：这是一个“更严格、更保守”的策略；在无网络/DNS 不可用时可能导致发送失败。`*_strict` 构造函数会把校验提前到构造阶段。
 
 ## GitHub API（GitHubCommentSink）
 
@@ -47,6 +50,13 @@ Webhook 发送本质是“服务端发起 HTTP 请求”。如果 URL 可被不�
 
 - token 属于敏感信息：不要写入日志/错误信息/Debug 输出
 - 建议用最小权限的 token（只授予目标仓库的必要写权限）
+
+## 国内推送平台（ServerChan/PushPlus/Bark）
+
+这些 sinks 通常需要 token / send_key / device_key：
+
+- 属于敏感信息：不要写入日志/错误信息/Debug 输出
+- 建议用最小权限/最小范围的 key（能发通知即可）
 
 ## DoS / 噪音控制
 

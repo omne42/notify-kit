@@ -11,7 +11,7 @@ let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook
 let sink = FeishuWebhookSink::new(cfg)?;
 ```
 
-可选：启用更严格的 DNS 公网 IP 校验（可能导致无网络时构造失败）：
+默认发送前会做 DNS 公网 IP 校验；如果你希望在 **构造阶段** 也校验一次（可能导致无网络时构造失败），可以用：
 
 ```rust
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
@@ -33,7 +33,7 @@ let sink = FeishuWebhookSink::new_with_secret(cfg, "your_secret")?;
 
 每次发送会自动填充 `timestamp` / `sign` 字段，并且不会在 `Debug`/错误信息中泄露 secret 或完整 webhook URL。
 
-如果你需要同时启用签名 + DNS 公网 IP 校验，可以用：
+如果你需要同时启用签名 + DNS 公网 IP 校验，并且希望在 **构造阶段** 也校验一次，可以用：
 
 ```rust
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};

@@ -5,7 +5,7 @@ use crate::sinks::crypto::hmac_sha256_base64;
 use crate::sinks::http::{
     DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
     read_json_body_limited, redact_url, redact_url_str, sanitize_reqwest_error,
-    validate_url_path_prefix, validate_url_resolves_to_public_ip,
+    validate_url_path_prefix, validate_url_resolves_to_public_ip_async,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
@@ -41,7 +41,7 @@ impl DingTalkWebhookConfig {
             secret: None,
             timeout: Duration::from_secs(2),
             max_chars: 4000,
-            enforce_public_ip: false,
+            enforce_public_ip: true,
         }
     }
 
@@ -75,6 +75,7 @@ pub struct DingTalkWebhookSink {
     secret: Option<String>,
     client: reqwest::Client,
     max_chars: usize,
+    enforce_public_ip: bool,
 }
 
 impl std::fmt::Debug for DingTalkWebhookSink {
@@ -92,9 +93,6 @@ impl DingTalkWebhookSink {
         let webhook_url =
             parse_and_validate_https_url(&config.webhook_url, &DINGTALK_ALLOWED_HOSTS)?;
         validate_url_path_prefix(&webhook_url, "/robot/send")?;
-        if config.enforce_public_ip {
-            validate_url_resolves_to_public_ip(&webhook_url)?;
-        }
         let client = build_http_client(config.timeout)?;
 
         if let Some(secret) = config.secret.as_deref() {
@@ -108,6 +106,7 @@ impl DingTalkWebhookSink {
             secret: config.secret,
             client,
             max_chars: config.max_chars,
+            enforce_public_ip: config.enforce_public_ip,
         })
     }
 
@@ -149,6 +148,9 @@ impl Sink for DingTalkWebhookSink {
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
             let url = self.webhook_url_with_signature()?;
+            if self.enforce_public_ip {
+                validate_url_resolves_to_public_ip_async(url.clone()).await?;
+            }
             let payload = Self::build_payload(event, self.max_chars);
 
             let resp = self

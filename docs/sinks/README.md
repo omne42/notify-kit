@@ -10,6 +10,10 @@
 - `slack`：Slack Incoming Webhook
 - `discord`：Discord webhook
 - `telegram`：Telegram Bot API
+- `serverchan`：Server酱（ServerChan）
+- `pushplus`：PushPlus
+- `bark`：Bark
+- `webhook`：通用 JSON webhook
 - `dingtalk`：钉钉 webhook
 - `wecom`：企业微信 webhook
 
