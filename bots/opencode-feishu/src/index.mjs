@@ -1,0 +1,176 @@
+import http from "http"
+import lark from "@larksuiteoapi/node-sdk"
+import { createOpencode } from "@opencode-ai/sdk"
+
+function assertEnv(name, { optional = false } = {}) {
+  const value = process.env[name]
+  if ((value === undefined || String(value).trim() === "") && !optional) {
+    throw new Error(`missing required env: ${name}`)
+  }
+}
+
+assertEnv("FEISHU_APP_ID")
+assertEnv("FEISHU_APP_SECRET")
+assertEnv("FEISHU_VERIFICATION_TOKEN")
+assertEnv("FEISHU_ENCRYPT_KEY", { optional: true })
+
+const port = Number.parseInt(process.env.PORT || "3000", 10)
+
+console.log("🚀 Starting opencode server...")
+const opencode = await createOpencode({ port: 0 })
+console.log("✅ Opencode server ready")
+
+const client = new lark.Client({
+  appId: process.env.FEISHU_APP_ID,
+  appSecret: process.env.FEISHU_APP_SECRET,
+})
+
+/**
+ * sessionKey = `${tenantKey ?? "default"}-${chatId}`
+ * value = { sessionId, tenantKey, chatId }
+ */
+const sessions = new Map()
+
+async function sendTextToChat(tenantKey, chatId, text) {
+  if (!chatId || !text) return
+  const scoped = tenantKey ? client.withTenantKey(tenantKey) : client
+  await scoped.im.message
+    .create({
+      params: { receive_id_type: "chat_id" },
+      data: {
+        receive_id: chatId,
+        msg_type: "text",
+        content: JSON.stringify({ text }),
+      },
+    })
+    .catch(() => {})
+}
+
+async function ensureSession(tenantKey, chatId) {
+  const sessionKey = `${tenantKey || "default"}-${chatId}`
+  let session = sessions.get(sessionKey)
+  if (session) return session
+
+  const created = await opencode.client.session.create({
+    body: { title: `Feishu chat ${chatId}` },
+  })
+
+  if (created.error) {
+    throw new Error(created.error.message || "failed to create session")
+  }
+
+  session = { sessionId: created.data.id, tenantKey, chatId }
+  sessions.set(sessionKey, session)
+
+  const share = await opencode.client.session.share({ path: { id: session.sessionId } })
+  const url = share?.data?.share?.url
+  if (url) {
+    await sendTextToChat(tenantKey, chatId, url)
+  }
+
+  return session
+}
+
+async function handleUserText(tenantKey, chatId, text) {
+  const trimmed = String(text || "").trim()
+  if (!trimmed) return
+
+  if (trimmed === "/test") {
+    await sendTextToChat(tenantKey, chatId, "Bot is working.")
+    return
+  }
+
+  let session
+  try {
+    session = await ensureSession(tenantKey, chatId)
+  } catch {
+    await sendTextToChat(tenantKey, chatId, "Sorry, I had trouble creating a session.")
+    return
+  }
+
+  const result = await opencode.client.session.prompt({
+    path: { id: session.sessionId },
+    body: { parts: [{ type: "text", text: trimmed }] },
+  })
+
+  if (result.error) {
+    await sendTextToChat(tenantKey, chatId, "Sorry, I had trouble processing your message.")
+    return
+  }
+
+  const response = result.data
+  const responseText =
+    response?.info?.content ||
+    response?.parts
+      ?.filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("\n") ||
+    "I received your message but didn't have a response."
+
+  await sendTextToChat(tenantKey, chatId, responseText)
+}
+
+async function handleToolUpdate(part) {
+  if (!part || part.type !== "tool") return
+  if (!part.state || part.state.status !== "completed") return
+
+  const sessionId = part.sessionID
+  for (const session of sessions.values()) {
+    if (session.sessionId !== sessionId) continue
+    const title = part.state.title || "completed"
+    const tool = part.tool || "tool"
+    await sendTextToChat(session.tenantKey, session.chatId, `${tool} - ${title}`)
+    break
+  }
+}
+
+;(async () => {
+  const events = await opencode.client.event.subscribe()
+  for await (const event of events.stream) {
+    if (event?.type !== "message.part.updated") continue
+    const part = event?.properties?.part
+    await handleToolUpdate(part)
+  }
+})().catch((err) => {
+  console.error("event subscription failed:", err)
+  process.exitCode = 1
+})
+
+const dispatcher = new lark.EventDispatcher({
+  encryptKey: process.env.FEISHU_ENCRYPT_KEY,
+  verificationToken: process.env.FEISHU_VERIFICATION_TOKEN,
+})
+
+dispatcher.register({
+  im_message_receive_v1: async (data) => {
+    const payload = data?.event || data
+
+    const senderType = payload?.sender?.sender_type
+    if (senderType && senderType !== "user") return
+
+    const tenantKey = data?.header?.tenant_key || payload?.tenant_key || null
+    const chatId = payload?.message?.chat_id
+    const content = payload?.message?.content
+    if (!chatId || !content) return
+
+    let text
+    try {
+      text = JSON.parse(content).text
+    } catch {
+      return
+    }
+
+    queueMicrotask(() => {
+      handleUserText(tenantKey, chatId, text).catch((err) => {
+        console.error("handle message failed:", err)
+      })
+    })
+  },
+})
+
+const server = http.createServer()
+server.on("request", lark.adaptDefault("/webhook/event", dispatcher))
+server.listen(port, () => {
+  console.log(`⚡️ Feishu bot is listening on :${port}`)
+})
+

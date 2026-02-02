@@ -1,0 +1,148 @@
+import { createOpencode } from "@opencode-ai/sdk"
+import { DWClient, DWClientDownStream, EventAck, TOPIC_ROBOT } from "dingtalk-stream"
+
+function assertEnv(name) {
+  if (!process.env[name] || String(process.env[name]).trim() === "") {
+    throw new Error(`missing required env: ${name}`)
+  }
+}
+
+assertEnv("DINGTALK_CLIENT_ID")
+assertEnv("DINGTALK_CLIENT_SECRET")
+
+console.log("🚀 Starting opencode server...")
+const opencode = await createOpencode({ port: 0 })
+console.log("✅ Opencode server ready")
+
+const client = new DWClient({
+  clientId: process.env.DINGTALK_CLIENT_ID,
+  clientSecret: process.env.DINGTALK_CLIENT_SECRET,
+})
+
+/**
+ * sessionKey = sessionWebhook
+ * value = { sessionId, sessionWebhook }
+ */
+const sessions = new Map()
+
+async function postSessionMessage(sessionWebhook, text) {
+  const accessToken = await client.getAccessToken()
+  await fetch(sessionWebhook, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-acs-dingtalk-access-token": accessToken,
+    },
+    body: JSON.stringify({
+      msgtype: "text",
+      text: { content: text },
+    }),
+  }).catch(() => {})
+}
+
+async function ensureSession(sessionWebhook) {
+  const sessionKey = sessionWebhook
+  let session = sessions.get(sessionKey)
+  if (session) return session
+
+  const created = await opencode.client.session.create({
+    body: { title: "DingTalk session" },
+  })
+  if (created.error) {
+    throw new Error(created.error.message || "failed to create session")
+  }
+
+  session = { sessionId: created.data.id, sessionWebhook }
+  sessions.set(sessionKey, session)
+
+  const share = await opencode.client.session.share({ path: { id: session.sessionId } })
+  const url = share?.data?.share?.url
+  if (url) {
+    await postSessionMessage(sessionWebhook, url)
+  }
+
+  return session
+}
+
+async function handleUserText(sessionWebhook, text) {
+  const trimmed = String(text || "").trim()
+  if (!trimmed) return
+
+  if (trimmed === "/test") {
+    await postSessionMessage(sessionWebhook, "Bot is working.")
+    return
+  }
+
+  let session
+  try {
+    session = await ensureSession(sessionWebhook)
+  } catch {
+    await postSessionMessage(sessionWebhook, "Sorry, I had trouble creating a session.")
+    return
+  }
+
+  const result = await opencode.client.session.prompt({
+    path: { id: session.sessionId },
+    body: { parts: [{ type: "text", text: trimmed }] },
+  })
+
+  if (result.error) {
+    await postSessionMessage(sessionWebhook, "Sorry, I had trouble processing your message.")
+    return
+  }
+
+  const response = result.data
+  const responseText =
+    response?.info?.content ||
+    response?.parts
+      ?.filter((p) => p.type === "text")
+      .map((p) => p.text)
+      .join("\n") ||
+    "I received your message but didn't have a response."
+
+  await postSessionMessage(sessionWebhook, responseText)
+}
+
+async function handleToolUpdate(part) {
+  if (!part || part.type !== "tool") return
+  if (!part.state || part.state.status !== "completed") return
+
+  const sessionId = part.sessionID
+  for (const session of sessions.values()) {
+    if (session.sessionId !== sessionId) continue
+    const title = part.state.title || "completed"
+    const tool = part.tool || "tool"
+    await postSessionMessage(session.sessionWebhook, `${tool} - ${title}`)
+    break
+  }
+}
+
+;(async () => {
+  const events = await opencode.client.event.subscribe()
+  for await (const event of events.stream) {
+    if (event?.type !== "message.part.updated") continue
+    const part = event?.properties?.part
+    await handleToolUpdate(part)
+  }
+})().catch((err) => {
+  console.error("event subscription failed:", err)
+  process.exitCode = 1
+})
+
+const downstream = new DWClientDownStream(client)
+downstream.registerCallbackListener(TOPIC_ROBOT, (res) => {
+  const sessionWebhook = res?.data?.sessionWebhook
+  const content = res?.data?.text?.content
+  if (!sessionWebhook || !content) return EventAck.SUCCESS
+
+  queueMicrotask(() => {
+    handleUserText(sessionWebhook, content).catch((err) => {
+      console.error("handle message failed:", err)
+    })
+  })
+
+  return EventAck.SUCCESS
+})
+
+await downstream.connect()
+console.log("⚡️ DingTalk Stream bot is running!")

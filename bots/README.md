@@ -10,3 +10,14 @@ OpenCode 风格的 Slack bot（Socket Mode）：把 Slack thread 映射为会话
 
 见：`bots/opencode-slack/README.md`
 
+## opencode-feishu
+
+OpenCode 风格的飞书（Lark/Feishu）事件订阅 bot：把群聊映射为会话，并在群里输出会话分享链接与工具执行更新。
+
+见：`bots/opencode-feishu/README.md`
+
+## opencode-dingtalk-stream
+
+OpenCode 风格的钉钉 Stream Mode bot：把会话（sessionWebhook）映射为会话，并在群里输出会话分享链接与工具执行更新。
+
+见：`bots/opencode-dingtalk-stream/README.md`
