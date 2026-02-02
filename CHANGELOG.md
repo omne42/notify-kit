@@ -28,6 +28,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `SoundSink`：外部命令会被回收（避免僵尸进程累积）。
 - `SoundSink`：拒绝空 program 的错误配置。
 - `FeishuWebhookConfig`/`FeishuWebhookSink`：`Debug` 输出不再泄露完整 webhook URL。
+- `SoundSink`：调整测试模块位置以通过 clippy（`items_after_test_module`）。
 
 ## [0.1.0] - 2026-01-31
 

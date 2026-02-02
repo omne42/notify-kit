@@ -77,23 +77,6 @@ impl SoundSink {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn send_command_rejects_empty_argv() {
-        let err = SoundSink::send_command(&[]).expect_err("expected error");
-        assert!(err.to_string().contains("argv is empty"), "{err:#}");
-    }
-
-    #[test]
-    fn send_command_rejects_empty_program() {
-        let err = SoundSink::send_command(&[String::from("  ")]).expect_err("expected error");
-        assert!(err.to_string().contains("program is empty"), "{err:#}");
-    }
-}
-
 impl Sink for SoundSink {
     fn name(&self) -> &'static str {
         "sound"
@@ -109,5 +92,22 @@ impl Sink for SoundSink {
             Self::send_terminal_bell(event)?;
             Ok(())
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn send_command_rejects_empty_argv() {
+        let err = SoundSink::send_command(&[]).expect_err("expected error");
+        assert!(err.to_string().contains("argv is empty"), "{err:#}");
+    }
+
+    #[test]
+    fn send_command_rejects_empty_program() {
+        let err = SoundSink::send_command(&[String::from("  ")]).expect_err("expected error");
+        assert!(err.to_string().contains("program is empty"), "{err:#}");
     }
 }
