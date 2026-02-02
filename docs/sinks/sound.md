@@ -39,3 +39,4 @@ let sink = SoundSink::new(SoundConfig {
 
 - 外部命令会被 spawn，并在后台线程中 wait 回收进程（避免僵尸进程累积）。
 - `command_argv` 属于**本机受信任配置**；不要把不可信输入拼到 argv 里。
+- 如果你的配置可能来自远程/不可信来源（例如 bot、服务端动态配置），建议禁用外部命令模式，只使用默认 bell。

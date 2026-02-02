@@ -194,13 +194,8 @@ impl Sink for ServerChanSink {
                 return Ok(());
             }
 
-            let message = body["message"]
-                .as_str()
-                .or_else(|| body["msg"].as_str())
-                .unwrap_or("");
-            let message = truncate_chars(message, 200);
             Err(anyhow::anyhow!(
-                "serverchan api error: code={code}, msg={message} (response body omitted)"
+                "serverchan api error: code={code} (response body omitted)"
             ))
         })
     }

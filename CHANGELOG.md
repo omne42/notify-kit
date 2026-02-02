@@ -11,6 +11,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `Hub::send(event).await`：提供可观测的发送结果（等待所有 sinks 完成/超时）。
 - `Hub::new_with_inflight_limit`：限制 `notify()` 的后台并发，超限会丢弃并 warning（背压/防 DoS）。
 - `FeishuWebhookConfig`：新增 `max_chars`/`with_max_chars` 与 `enforce_public_ip`/`with_public_ip_check`。
+- `GenericWebhookConfig::new_strict` / `GenericWebhookSink::new_strict`：提供更严格的 SSRF 防护（强制 host allow-list + path 前缀 + 公网 IP 校验）。
 - New sinks:
   - `SlackWebhookSink`：Slack Incoming Webhook（text）。
   - `DiscordWebhookSink`：Discord webhook（text）。
@@ -37,6 +38,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookConfig`/`FeishuWebhookSink`：`Debug` 输出不再泄露完整 webhook URL。
 - `SoundSink`：调整测试模块位置以通过 clippy（`items_after_test_module`）。
 - `dingtalk` / `wecom` sink：2xx 响应但 body 非 JSON/读取失败时不再误判为失败（只在明确 errcode 非 0 时失败）。
+- `serverchan` sink：错误信息不再回显第三方返回的 message（保持低敏感）。
 
 ## [0.1.0] - 2026-01-31
 

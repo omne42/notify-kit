@@ -47,6 +47,22 @@ impl GenericWebhookConfig {
         }
     }
 
+    pub fn new_strict(
+        url: impl Into<String>,
+        path_prefix: impl Into<String>,
+        allowed_hosts: Vec<String>,
+    ) -> Self {
+        Self {
+            url: url.into(),
+            payload_field: "text".to_string(),
+            timeout: Duration::from_secs(2),
+            max_chars: 16 * 1024,
+            enforce_public_ip: true,
+            path_prefix: Some(path_prefix.into()),
+            allowed_hosts,
+        }
+    }
+
     #[must_use]
     pub fn with_payload_field(mut self, payload_field: impl Into<String>) -> Self {
         self.payload_field = payload_field.into();
@@ -127,6 +143,63 @@ impl GenericWebhookSink {
             if !allowed {
                 return Err(anyhow::anyhow!("url host is not allowed"));
             }
+        }
+
+        let client = build_http_client(config.timeout)?;
+        Ok(Self {
+            url,
+            payload_field: config.payload_field,
+            client,
+            max_chars: config.max_chars,
+            enforce_public_ip: config.enforce_public_ip,
+        })
+    }
+
+    pub fn new_strict(config: GenericWebhookConfig) -> anyhow::Result<Self> {
+        if !config.enforce_public_ip {
+            return Err(anyhow::anyhow!(
+                "generic webhook strict mode requires public ip check"
+            ));
+        }
+        if config.allowed_hosts.is_empty() {
+            return Err(anyhow::anyhow!(
+                "generic webhook strict mode requires allowed_hosts"
+            ));
+        }
+        let Some(path_prefix) = config.path_prefix.as_deref() else {
+            return Err(anyhow::anyhow!(
+                "generic webhook strict mode requires path_prefix"
+            ));
+        };
+        let path_prefix = path_prefix.trim();
+        if path_prefix.is_empty() || !path_prefix.starts_with('/') {
+            return Err(anyhow::anyhow!(
+                "generic webhook strict mode requires path_prefix starting with '/'"
+            ));
+        }
+        if config.allowed_hosts.iter().any(|h| h.trim().is_empty()) {
+            return Err(anyhow::anyhow!(
+                "generic webhook allowed_hosts must not be empty"
+            ));
+        }
+        if config.payload_field.trim().is_empty() {
+            return Err(anyhow::anyhow!(
+                "generic webhook payload_field must not be empty"
+            ));
+        }
+
+        let url = parse_and_validate_https_url_basic(&config.url)?;
+        validate_url_path_prefix(&url, path_prefix)?;
+
+        let Some(host) = url.host_str() else {
+            return Err(anyhow::anyhow!("url must have a host"));
+        };
+        let allowed = config
+            .allowed_hosts
+            .iter()
+            .any(|h| host.eq_ignore_ascii_case(h));
+        if !allowed {
+            return Err(anyhow::anyhow!("url host is not allowed"));
         }
 
         let client = build_http_client(config.timeout)?;
@@ -221,5 +294,64 @@ mod tests {
         let cfg_dbg = format!("{cfg:?}");
         assert!(!cfg_dbg.contains("secret=x"), "{cfg_dbg}");
         assert!(cfg_dbg.contains("<redacted>"), "{cfg_dbg}");
+    }
+
+    #[test]
+    fn strict_requires_allowed_hosts_and_path_prefix() {
+        let cfg = GenericWebhookConfig::new("https://example.com/webhook");
+        let err = GenericWebhookSink::new_strict(cfg).expect_err("expected strict validation");
+        assert!(err.to_string().contains("allowed_hosts"), "{err:#}");
+
+        let cfg = GenericWebhookConfig::new("https://example.com/webhook")
+            .with_allowed_hosts(vec!["example.com".to_string()]);
+        let err = GenericWebhookSink::new_strict(cfg).expect_err("expected strict validation");
+        assert!(err.to_string().contains("path_prefix"), "{err:#}");
+    }
+
+    #[test]
+    fn strict_rejects_disabled_public_ip_check() {
+        let cfg = GenericWebhookConfig::new_strict(
+            "https://example.com/hooks/notify",
+            "/hooks/",
+            vec!["example.com".to_string()],
+        )
+        .with_public_ip_check(false);
+        let err = GenericWebhookSink::new_strict(cfg).expect_err("expected strict validation");
+        assert!(err.to_string().contains("public ip"), "{err:#}");
+    }
+
+    #[test]
+    fn strict_accepts_matching_host_and_path_prefix() {
+        let cfg = GenericWebhookConfig::new_strict(
+            "https://example.com/hooks/notify",
+            "/hooks/",
+            vec!["example.com".to_string()],
+        )
+        .with_payload_field("content");
+        let sink = GenericWebhookSink::new_strict(cfg).expect("build strict sink");
+        assert_eq!(sink.url.host_str().unwrap_or(""), "example.com");
+        assert!(sink.url.path().starts_with("/hooks/"));
+    }
+
+    #[test]
+    fn strict_rejects_unexpected_host() {
+        let cfg = GenericWebhookConfig::new_strict(
+            "https://evil.com/hooks/notify",
+            "/hooks/",
+            vec!["example.com".to_string()],
+        );
+        let err = GenericWebhookSink::new_strict(cfg).expect_err("expected invalid host");
+        assert!(err.to_string().contains("host is not allowed"), "{err:#}");
+    }
+
+    #[test]
+    fn strict_rejects_unexpected_path() {
+        let cfg = GenericWebhookConfig::new_strict(
+            "https://example.com/api/notify",
+            "/hooks/",
+            vec!["example.com".to_string()],
+        );
+        let err = GenericWebhookSink::new_strict(cfg).expect_err("expected invalid path");
+        assert!(err.to_string().contains("path is not allowed"), "{err:#}");
     }
 }

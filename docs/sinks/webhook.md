@@ -23,7 +23,22 @@ let cfg = GenericWebhookConfig::new("https://example.com/hooks/notify")
 let sink = GenericWebhookSink::new(cfg)?;
 ```
 
+## 严格模式（推荐）
+
+如果 webhook URL 可能来自**不可信输入/远程配置**，建议使用严格模式：强制配置 `allowed_hosts` + `path_prefix`，并且不能关闭 DNS 公网 IP 校验：
+
+```rust
+use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
+
+let cfg = GenericWebhookConfig::new_strict(
+    "https://example.com/hooks/notify",
+    "/hooks/",
+    vec!["example.com".to_string()],
+);
+let sink = GenericWebhookSink::new_strict(cfg)?;
+```
+
 ## 安全提示
 
 - 默认会做 DNS 公网 IP 校验（可通过 `with_public_ip_check(false)` 关闭）。
-- 如果你使用 `allowed_hosts`，建议把它视为安全边界（不要从不可信输入构造）。
+- 如果你使用 `allowed_hosts`，建议把它视为安全边界（不要从不可信输入构造）；不确定时用上面的严格模式。

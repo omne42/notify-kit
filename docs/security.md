@@ -35,6 +35,16 @@ Webhook 发送本质是“服务端发起 HTTP 请求”。如果 URL 可被不�
 - **校验 URL path 前缀**（避免误配到同域其它 endpoint）
 - **错误信息保持低敏感**（不输出 body、不输出完整 URL）
 
+## GenericWebhookSink（通用 webhook）
+
+`GenericWebhookSink` 可以向任意 HTTPS URL 发送 JSON（如果不设置 `allowed_hosts`），因此当 URL 可被不可信输入影响时，依然存在 SSRF 风险（即使做了公网 IP 校验）。
+
+建议：
+
+- 尽量配置 `allowed_hosts` + `path_prefix`（把它们视为安全边界）
+- 优先使用 `GenericWebhookSink::new_strict`（强制 `allowed_hosts`/`path_prefix`，且禁止关闭公网 IP 校验）
+- 不要把 webhook URL 当作用户输入/可回显的字段
+
 ### DNS 解析结果必须是公网 IP（默认启用）
 
 为降低 DNS 污染 / DNS rebinding / 内网解析等风险，内置 HTTP sinks 默认会在发送前做一次 DNS 解析校验：

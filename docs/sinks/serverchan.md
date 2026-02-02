@@ -26,3 +26,4 @@ let sink = ServerChanSink::new(cfg)?;
 
 - `send_key` 属于敏感信息：不要写入日志/错误信息/Debug 输出。
 - 默认会做 DNS 公网 IP 校验（可通过 `with_public_ip_check(false)` 关闭）。
+- 错误信息刻意保持低敏感：不会包含 response body（也不会回显第三方返回的 message）。
