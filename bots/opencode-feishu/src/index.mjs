@@ -1,5 +1,5 @@
 import http from "http"
-import lark from "@larksuiteoapi/node-sdk"
+import * as lark from "@larksuiteoapi/node-sdk"
 import { createOpencode } from "@opencode-ai/sdk"
 
 function assertEnv(name, { optional = false } = {}) {
@@ -33,16 +33,20 @@ const sessions = new Map()
 
 async function sendTextToChat(tenantKey, chatId, text) {
   if (!chatId || !text) return
-  const scoped = tenantKey ? client.withTenantKey(tenantKey) : client
-  await scoped.im.message
-    .create({
+  const req = {
       params: { receive_id_type: "chat_id" },
       data: {
         receive_id: chatId,
         msg_type: "text",
         content: JSON.stringify({ text }),
       },
-    })
+    }
+
+  const tenantOpt =
+    tenantKey && String(tenantKey).trim() !== "" ? lark.withTenantKey(tenantKey) : undefined
+
+  await client.im.message
+    .create(req, tenantOpt)
     .catch(() => {})
 }
 
@@ -139,18 +143,16 @@ async function handleToolUpdate(part) {
 const dispatcher = new lark.EventDispatcher({
   encryptKey: process.env.FEISHU_ENCRYPT_KEY,
   verificationToken: process.env.FEISHU_VERIFICATION_TOKEN,
-})
+}).register({
+  "im.message.receive_v1": async (data) => {
+    if (!data || !data.message || !data.sender) return
+    if (data.sender.sender_type !== "user") return
 
-dispatcher.register({
-  im_message_receive_v1: async (data) => {
-    const payload = data?.event || data
+    if (data.message.message_type !== "text") return
 
-    const senderType = payload?.sender?.sender_type
-    if (senderType && senderType !== "user") return
-
-    const tenantKey = data?.header?.tenant_key || payload?.tenant_key || null
-    const chatId = payload?.message?.chat_id
-    const content = payload?.message?.content
+    const tenantKey = data.tenant_key || data.sender.tenant_key || null
+    const chatId = data.message.chat_id
+    const content = data.message.content
     if (!chatId || !content) return
 
     let text
@@ -169,8 +171,12 @@ dispatcher.register({
 })
 
 const server = http.createServer()
-server.on("request", lark.adaptDefault("/webhook/event", dispatcher))
+server.on(
+  "request",
+  lark.adaptDefault("/webhook/event", dispatcher, {
+    autoChallenge: true,
+  }),
+)
 server.listen(port, () => {
   console.log(`⚡️ Feishu bot is listening on :${port}`)
 })
-

@@ -43,6 +43,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `SoundSink`：调整测试模块位置以通过 clippy（`items_after_test_module`）。
 - `dingtalk` / `wecom` sink：2xx 响应但 body 非 JSON/读取失败时不再误判为失败（只在明确 errcode 非 0 时失败）。
 - `serverchan` sink：错误信息不再回显第三方返回的 message（保持低敏感）。
+- `bots/opencode-feishu`：修正 Feishu SDK 的 ESM 导入与事件名（`im.message.receive_v1`），并启用 callback challenge 自动处理。
 
 ## [0.1.0] - 2026-01-31
 
