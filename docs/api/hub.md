@@ -14,6 +14,21 @@ let hub = Hub::new(
 );
 ```
 
+如果你需要对 `notify()` 的后台并发做背压（避免事件洪泛导致无界 spawn），可以用：
+
+```rust
+use std::sync::Arc;
+use notify_kit::{Hub, HubConfig, SoundConfig, SoundSink};
+
+let hub = Hub::new_with_inflight_limit(
+    HubConfig::default(),
+    vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))],
+    32,
+);
+```
+
+当 inflight 超过上限时，`notify()` 会丢弃该条通知并记录 warning；`send().await` 会等待额度释放。
+
 ## HubConfig
 
 - `enabled_kinds: Option<BTreeSet<String>>`
@@ -56,4 +71,3 @@ one or more sinks failed:
 - feishu: timeout after 2s
 - sound: boom
 ```
-

@@ -45,6 +45,10 @@ impl SoundSink {
             .split_first()
             .ok_or_else(|| anyhow::anyhow!("sound command argv is empty"))?;
 
+        if program.trim().is_empty() {
+            return Err(anyhow::anyhow!("sound command program is empty"));
+        }
+
         let mut child = std::process::Command::new(program)
             .args(args)
             .spawn()
@@ -70,6 +74,23 @@ impl SoundSink {
             }
         });
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn send_command_rejects_empty_argv() {
+        let err = SoundSink::send_command(&[]).expect_err("expected error");
+        assert!(err.to_string().contains("argv is empty"), "{err:#}");
+    }
+
+    #[test]
+    fn send_command_rejects_empty_program() {
+        let err = SoundSink::send_command(&[String::from("  ")]).expect_err("expected error");
+        assert!(err.to_string().contains("program is empty"), "{err:#}");
     }
 }
 

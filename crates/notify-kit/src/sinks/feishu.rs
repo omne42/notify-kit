@@ -1,5 +1,16 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::Event;
+use crate::sinks::crypto::hmac_sha256_base64;
+use crate::sinks::http::{
+    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
+    read_json_body_limited, redact_url, redact_url_str, sanitize_reqwest_error,
+    validate_url_path_prefix, validate_url_resolves_to_public_ip,
+};
+use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
+
+const FEISHU_MAX_CHARS: usize = 4000;
 
 #[derive(Clone)]
 pub struct FeishuWebhookConfig {
@@ -10,7 +21,7 @@ pub struct FeishuWebhookConfig {
 impl std::fmt::Debug for FeishuWebhookConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FeishuWebhookConfig")
-            .field("webhook_url", &redact_webhook_url_str(&self.webhook_url))
+            .field("webhook_url", &redact_url_str(&self.webhook_url))
             .field("timeout", &self.timeout)
             .finish()
     }
@@ -28,122 +39,90 @@ impl FeishuWebhookConfig {
 pub struct FeishuWebhookSink {
     webhook_url: reqwest::Url,
     client: reqwest::Client,
+    secret: Option<String>,
 }
 
 impl std::fmt::Debug for FeishuWebhookSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FeishuWebhookSink")
-            .field("webhook_url", &redact_webhook_url(&self.webhook_url))
+            .field("webhook_url", &redact_url(&self.webhook_url))
+            .field("secret", &self.secret.as_ref().map(|_| "<redacted>"))
             .finish_non_exhaustive()
     }
 }
 
 impl FeishuWebhookSink {
     pub fn new(config: FeishuWebhookConfig) -> anyhow::Result<Self> {
-        let webhook_url = parse_and_validate_webhook_url(&config.webhook_url)?;
-        let client = reqwest::Client::builder()
-            .timeout(config.timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|err| anyhow::anyhow!("build reqwest client: {err}"))?;
+        Self::new_internal(config, None, false)
+    }
+
+    pub fn new_strict(config: FeishuWebhookConfig) -> anyhow::Result<Self> {
+        Self::new_internal(config, None, true)
+    }
+
+    pub fn new_with_secret(
+        config: FeishuWebhookConfig,
+        secret: impl Into<String>,
+    ) -> anyhow::Result<Self> {
+        let secret = secret.into();
+        if secret.trim().is_empty() {
+            return Err(anyhow::anyhow!("feishu secret must not be empty"));
+        }
+        Self::new_internal(config, Some(secret), false)
+    }
+
+    pub fn new_with_secret_strict(
+        config: FeishuWebhookConfig,
+        secret: impl Into<String>,
+    ) -> anyhow::Result<Self> {
+        let secret = secret.into();
+        if secret.trim().is_empty() {
+            return Err(anyhow::anyhow!("feishu secret must not be empty"));
+        }
+        Self::new_internal(config, Some(secret), true)
+    }
+
+    fn new_internal(
+        config: FeishuWebhookConfig,
+        secret: Option<String>,
+        enforce_public_ip: bool,
+    ) -> anyhow::Result<Self> {
+        let webhook_url = parse_and_validate_https_url(
+            &config.webhook_url,
+            &["open.feishu.cn", "open.larksuite.com"],
+        )?;
+        validate_url_path_prefix(&webhook_url, "/open-apis/bot/v2/hook/")?;
+        if enforce_public_ip {
+            validate_url_resolves_to_public_ip(&webhook_url)?;
+        }
+        let client = build_http_client(config.timeout)?;
         Ok(Self {
             webhook_url,
             client,
+            secret,
         })
     }
 
-    fn build_text(event: &Event) -> String {
-        let mut out = String::new();
-        out.push_str(&event.title);
-
-        if let Some(body) = event.body.as_deref() {
-            let body = body.trim();
-            if !body.is_empty() {
-                out.push('\n');
-                out.push_str(body);
-            }
+    fn build_payload(
+        event: &Event,
+        timestamp: Option<&str>,
+        sign: Option<&str>,
+    ) -> serde_json::Value {
+        let mut obj = serde_json::Map::new();
+        obj.insert("msg_type".to_string(), serde_json::json!("text"));
+        obj.insert(
+            "content".to_string(),
+            serde_json::json!({
+                "text": format_event_text_limited(event, TextLimits::new(FEISHU_MAX_CHARS)),
+            }),
+        );
+        if let Some(timestamp) = timestamp {
+            obj.insert("timestamp".to_string(), serde_json::json!(timestamp));
         }
-
-        for (k, v) in &event.tags {
-            out.push('\n');
-            out.push_str(k);
-            out.push('=');
-            out.push_str(v);
+        if let Some(sign) = sign {
+            obj.insert("sign".to_string(), serde_json::json!(sign));
         }
-
-        out
-    }
-
-    fn build_payload(event: &Event) -> serde_json::Value {
-        serde_json::json!({
-            "msg_type": "text",
-            "content": {
-                "text": Self::build_text(event),
-            },
-        })
-    }
-}
-
-fn parse_and_validate_webhook_url(webhook_url: &str) -> anyhow::Result<reqwest::Url> {
-    let url = reqwest::Url::parse(webhook_url)
-        .map_err(|err| anyhow::anyhow!("invalid webhook url: {err}"))?;
-
-    if url.scheme() != "https" {
-        return Err(anyhow::anyhow!("webhook url must use https"));
-    }
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(anyhow::anyhow!("webhook url must not contain credentials"));
-    }
-
-    let Some(host) = url.host_str() else {
-        return Err(anyhow::anyhow!("webhook url must have a host"));
-    };
-    if host.eq_ignore_ascii_case("localhost") || host.parse::<std::net::IpAddr>().is_ok() {
-        return Err(anyhow::anyhow!("webhook url host is not allowed"));
-    }
-
-    let allowed_hosts = ["open.feishu.cn", "open.larksuite.com"];
-    if !allowed_hosts
-        .iter()
-        .any(|allowed| host.eq_ignore_ascii_case(allowed))
-    {
-        return Err(anyhow::anyhow!("webhook url host is not allowed"));
-    }
-
-    if let Some(port) = url.port() {
-        if port != 443 {
-            return Err(anyhow::anyhow!("webhook url port is not allowed"));
-        }
-    }
-
-    Ok(url)
-}
-
-fn redact_webhook_url_str(webhook_url: &str) -> String {
-    let Ok(url) = reqwest::Url::parse(webhook_url) else {
-        return "<redacted>".to_string();
-    };
-    redact_webhook_url(&url)
-}
-
-fn redact_webhook_url(url: &reqwest::Url) -> String {
-    match (url.scheme(), url.host_str()) {
-        (scheme, Some(host)) => format!("{scheme}://{host}/<redacted>"),
-        _ => "<redacted>".to_string(),
-    }
-}
-
-fn sanitize_reqwest_error(err: &reqwest::Error) -> &'static str {
-    if err.is_timeout() {
-        "timeout"
-    } else if err.is_connect() {
-        "connect"
-    } else if err.is_request() {
-        "request"
-    } else if err.is_decode() {
-        "decode"
-    } else {
-        "unknown"
+        serde_json::Value::Object(obj)
     }
 }
 
@@ -154,7 +133,22 @@ impl Sink for FeishuWebhookSink {
 
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            let payload = Self::build_payload(event);
+            let (timestamp, sign) = if let Some(secret) = self.secret.as_deref() {
+                let timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|err| anyhow::anyhow!("get unix timestamp: {err}"))?
+                    .as_secs()
+                    .to_string();
+
+                let string_to_sign = format!("{timestamp}\n{secret}");
+                let sign = hmac_sha256_base64(secret, &string_to_sign)?;
+
+                (Some(timestamp), Some(sign))
+            } else {
+                (None, None)
+            };
+
+            let payload = Self::build_payload(event, timestamp.as_deref(), sign.as_deref());
 
             let resp = self
                 .client
@@ -170,12 +164,27 @@ impl Sink for FeishuWebhookSink {
                 })?;
 
             let status = resp.status();
-            if status.is_success() {
+            if !status.is_success() {
+                return Err(anyhow::anyhow!(
+                    "feishu webhook http error: {status} (response body omitted)"
+                ));
+            }
+
+            let Ok(body) = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await
+            else {
+                return Ok(());
+            };
+
+            let code = body["StatusCode"]
+                .as_i64()
+                .or_else(|| body["code"].as_i64())
+                .unwrap_or(0);
+            if code == 0 {
                 return Ok(());
             }
 
             Err(anyhow::anyhow!(
-                "feishu webhook http error: {status} (response body omitted)"
+                "feishu api error: code={code} (response body omitted)"
             ))
         })
     }
@@ -191,7 +200,7 @@ mod tests {
             .with_body("ok")
             .with_tag("thread_id", "t1");
 
-        let payload = FeishuWebhookSink::build_payload(&event);
+        let payload = FeishuWebhookSink::build_payload(&event, None, None);
         assert_eq!(payload["msg_type"].as_str().unwrap_or(""), "text");
         let text = payload["content"]["text"].as_str().unwrap_or("");
         assert!(text.contains("done"));
@@ -214,6 +223,13 @@ mod tests {
     }
 
     #[test]
+    fn rejects_unexpected_webhook_path() {
+        let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/api/x");
+        let err = FeishuWebhookSink::new(cfg).expect_err("expected invalid path");
+        assert!(err.to_string().contains("path is not allowed"), "{err:#}");
+    }
+
+    #[test]
     fn debug_redacts_webhook_url() {
         let url = "https://open.feishu.cn/open-apis/bot/v2/hook/secret_token";
         let cfg = FeishuWebhookConfig::new(url);
@@ -227,5 +243,13 @@ mod tests {
         assert!(!sink_dbg.contains("secret_token"), "{sink_dbg}");
         assert!(sink_dbg.contains("open.feishu.cn"), "{sink_dbg}");
         assert!(sink_dbg.contains("<redacted>"), "{sink_dbg}");
+    }
+
+    #[test]
+    fn builds_payload_with_signature_fields() {
+        let event = Event::new("kind", crate::Severity::Info, "title");
+        let payload = FeishuWebhookSink::build_payload(&event, Some("123"), Some("sig"));
+        assert_eq!(payload["timestamp"].as_str().unwrap_or(""), "123");
+        assert_eq!(payload["sign"].as_str().unwrap_or(""), "sig");
     }
 }

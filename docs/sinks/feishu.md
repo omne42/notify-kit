@@ -1,6 +1,6 @@
 # FeishuWebhookSink
 
-`FeishuWebhookSink` 通过飞书群机器人 webhook 发送 **text** 消息。
+`FeishuWebhookSink` 通过飞书群机器人 webhook 发送 **text** 消息（可选签名）。
 
 ## 构造
 
@@ -9,6 +9,37 @@ use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
 let sink = FeishuWebhookSink::new(cfg)?;
+```
+
+可选：启用更严格的 DNS 公网 IP 校验（可能导致无网络时构造失败）：
+
+```rust
+use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
+
+let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
+let sink = FeishuWebhookSink::new_strict(cfg)?;
+```
+
+## 签名（可选）
+
+如果群机器人开启了 “签名校验”，可以用：
+
+```rust
+use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
+
+let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
+let sink = FeishuWebhookSink::new_with_secret(cfg, "your_secret")?;
+```
+
+每次发送会自动填充 `timestamp` / `sign` 字段，并且不会在 `Debug`/错误信息中泄露 secret 或完整 webhook URL。
+
+如果你需要同时启用签名 + DNS 公网 IP 校验，可以用：
+
+```rust
+use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
+
+let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
+let sink = FeishuWebhookSink::new_with_secret_strict(cfg, "your_secret")?;
 ```
 
 ## 超时
@@ -27,6 +58,7 @@ let sink = FeishuWebhookSink::new(cfg)?;
 - host 仅允许：
   - `open.feishu.cn`
   - `open.larksuite.com`
+- path 必须以 `/open-apis/bot/v2/hook/` 开头
 - 不允许 `localhost` 或 IP
 - 如显式指定端口，仅允许 `443`
 - 禁用重定向（redirect）

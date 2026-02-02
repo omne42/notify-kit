@@ -1,0 +1,44 @@
+# DiscordWebhookSink
+
+`DiscordWebhookSink` 通过 Discord webhook 发送 **text** 消息。
+
+## 构造
+
+```rust
+use std::time::Duration;
+
+use notify_kit::{DiscordWebhookConfig, DiscordWebhookSink};
+
+let cfg = DiscordWebhookConfig::new("https://discord.com/api/webhooks/xxx")
+    .with_timeout(Duration::from_secs(2))
+    .with_max_chars(2000)
+    // 可选：启用更严格的 DNS 公网 IP 校验（可能导致无网络时构造失败）
+    .with_public_ip_check(false);
+
+let sink = DiscordWebhookSink::new(cfg)?;
+```
+
+## 安全约束（重要）
+
+为降低 SSRF/凭据泄露风险，本库会对 webhook URL 做限制：
+
+- 必须是 `https`
+- 不允许携带 username/password
+- host 仅允许：`discord.com` / `discordapp.com`
+- path 必须以 `/api/webhooks/` 开头
+- 不允许 `localhost` 或 IP
+- 如显式指定端口，仅允许 `443`
+- 禁用重定向（redirect）
+- `Debug` 输出默认脱敏（不会泄露完整 webhook URL）
+
+## 输出格式
+
+文本内容由以下部分组成（按顺序）：
+
+1) `title`
+2) `body`（如果存在且非空）
+3) 每个 tag：`key=value`（逐行）
+
+## 长度限制
+
+`DiscordWebhookConfig.max_chars` 用于限制最终消息长度（超出会截断并追加 `...`）。

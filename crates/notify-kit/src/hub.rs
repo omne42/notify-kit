@@ -5,6 +5,8 @@ use std::time::Duration;
 use crate::event::Event;
 use crate::sinks::Sink;
 
+const DEFAULT_MAX_INFLIGHT_EVENTS: usize = 128;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TryNotifyError {
     NoTokioRuntime,
@@ -49,14 +51,25 @@ struct HubInner {
     enabled_kinds: Option<BTreeSet<String>>,
     sinks: Vec<Arc<dyn Sink>>,
     per_sink_timeout: Duration,
+    inflight: Arc<tokio::sync::Semaphore>,
 }
 
 impl Hub {
     pub fn new(config: HubConfig, sinks: Vec<Arc<dyn Sink>>) -> Self {
+        Self::new_with_inflight_limit(config, sinks, DEFAULT_MAX_INFLIGHT_EVENTS)
+    }
+
+    pub fn new_with_inflight_limit(
+        config: HubConfig,
+        sinks: Vec<Arc<dyn Sink>>,
+        max_inflight_events: usize,
+    ) -> Self {
+        let max_inflight_events = max_inflight_events.max(1);
         let inner = HubInner {
             enabled_kinds: config.enabled_kinds,
             sinks,
             per_sink_timeout: config.per_sink_timeout,
+            inflight: Arc::new(tokio::sync::Semaphore::new(max_inflight_events)),
         };
         Self {
             inner: Arc::new(inner),
@@ -81,7 +94,16 @@ impl Hub {
             return Err(TryNotifyError::NoTokioRuntime);
         };
 
+        let permit = match inner.inflight.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::warn!(sink = "hub", kind = %kind, "notify dropped: overloaded");
+                return Ok(());
+            }
+        };
+
         handle.spawn(async move {
+            let _permit = permit;
             if let Err(err) = inner.send(event).await {
                 tracing::warn!(sink = "hub", kind = %kind, "notify failed: {err}");
             }
@@ -96,6 +118,13 @@ impl Hub {
         }
 
         tokio::runtime::Handle::try_current().map_err(|_| TryNotifyError::NoTokioRuntime)?;
+        let _permit = self
+            .inner
+            .inflight
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| anyhow::anyhow!("hub inflight semaphore closed"))?;
         self.inner.clone().send(event).await
     }
 
@@ -110,6 +139,7 @@ impl Hub {
 impl HubInner {
     async fn send(self: Arc<Self>, event: Event) -> anyhow::Result<()> {
         let mut join_set = tokio::task::JoinSet::<(String, anyhow::Result<()>)>::new();
+        let event = Arc::new(event);
 
         for sink in &self.sinks {
             let sink = sink.clone();
@@ -150,6 +180,7 @@ impl HubInner {
 mod tests {
     use std::collections::BTreeSet;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use super::*;
@@ -272,6 +303,59 @@ mod tests {
             let err = hub.send(event).await.expect_err("expected timeout");
             let msg = err.to_string();
             assert!(msg.contains("timeout after"), "{msg}");
+        });
+    }
+
+    #[test]
+    fn try_notify_drops_when_overloaded() {
+        #[derive(Debug)]
+        struct CountingSink {
+            counter: Arc<AtomicUsize>,
+            sleep: Duration,
+        }
+
+        impl Sink for CountingSink {
+            fn name(&self) -> &'static str {
+                "counting"
+            }
+
+            fn send<'a>(&'a self, _event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+                Box::pin(async move {
+                    self.counter.fetch_add(1, Ordering::SeqCst);
+                    tokio::time::sleep(self.sleep).await;
+                    Ok(())
+                })
+            }
+        }
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build tokio runtime");
+
+        rt.block_on(async {
+            let counter = Arc::new(AtomicUsize::new(0));
+            let sinks: Vec<Arc<dyn Sink>> = vec![Arc::new(CountingSink {
+                counter: counter.clone(),
+                sleep: Duration::from_millis(50),
+            })];
+
+            let hub = Hub::new_with_inflight_limit(
+                HubConfig {
+                    enabled_kinds: None,
+                    per_sink_timeout: Duration::from_secs(1),
+                },
+                sinks,
+                1,
+            );
+
+            hub.try_notify(Event::new("kind", Severity::Info, "t1"))
+                .expect("first notify ok");
+            hub.try_notify(Event::new("kind", Severity::Info, "t2"))
+                .expect("second notify ok (dropped)");
+
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            assert_eq!(counter.load(Ordering::SeqCst), 1);
         });
     }
 }

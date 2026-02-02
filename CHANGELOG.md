@@ -9,13 +9,24 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 ### Added
 - `Hub::try_notify`：当缺少 Tokio runtime 时返回错误（避免静默丢通知）。
 - `Hub::send(event).await`：提供可观测的发送结果（等待所有 sinks 完成/超时）。
+- `Hub::new_with_inflight_limit`：限制 `notify()` 的后台并发，超限会丢弃并 warning（背压/防 DoS）。
+- New sinks:
+  - `SlackWebhookSink`：Slack Incoming Webhook（text）。
+  - `DiscordWebhookSink`：Discord webhook（text）。
+  - `TelegramBotSink`：Telegram Bot API（sendMessage）。
+  - `DingTalkWebhookSink`：钉钉群机器人 webhook（text，可选签名）。
+  - `WeComWebhookSink`：企业微信群机器人 webhook（text）。
+- `FeishuWebhookSink::new_with_secret`：支持飞书群机器人 webhook 签名（timestamp/sign）。
+- `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：可选启用 DNS 公网 IP 校验。
 
 ### Changed
 - `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
+- All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
 - Docs: add GitBook-style documentation under `docs/` and link from README.
 
 ### Fixed
 - `SoundSink`：外部命令会被回收（避免僵尸进程累积）。
+- `SoundSink`：拒绝空 program 的错误配置。
 - `FeishuWebhookConfig`/`FeishuWebhookSink`：`Debug` 输出不再泄露完整 webhook URL。
 
 ## [0.1.0] - 2026-01-31

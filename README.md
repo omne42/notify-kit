@@ -5,7 +5,12 @@
 当前实现：
 
 - `sound`：终端 bell（默认）或自定义播放命令
-- `feishu`：飞书群机器人 webhook（text 消息）
+- `feishu`：飞书群机器人 webhook（text 消息，可选签名）
+- `slack`：Slack Incoming Webhook（text 消息）
+- `discord`：Discord webhook（text 消息）
+- `telegram`：Telegram Bot API（sendMessage）
+- `dingtalk`：钉钉群机器人 webhook（text 消息，可选签名）
+- `wecom`：企业微信群机器人 webhook（text 消息）
 
 设计目标：
 
