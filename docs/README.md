@@ -13,8 +13,20 @@
 
 ## 当前内置 sinks
 
+内置 sinks：
+
 - `sound`：终端 bell（默认）或执行外部播放命令
-- `feishu`：飞书群机器人 webhook（text 消息）
+- `feishu`：飞书群机器人 webhook（text，可选签名）
+- `github`：GitHub Issues/PR 评论（text）
+- `slack`：Slack Incoming Webhook（text）
+- `discord`：Discord webhook（text）
+- `telegram`：Telegram Bot API（sendMessage）
+- `serverchan`：Server酱（ServerChan）
+- `pushplus`：PushPlus
+- `bark`：Bark
+- `webhook`：通用 JSON webhook
+- `dingtalk`：钉钉群机器人 webhook（text，可选签名）
+- `wecom`：企业微信群机器人 webhook（text）
 
 ## 适用场景
 
@@ -37,7 +49,7 @@
 - 入门： [快速开始](getting-started.md)
 - 概念： [核心概念](concepts.md)
 - API： [Hub](api/hub.md)、[Event](api/event.md)、[Sink](api/sink.md)
-- 内置 sinks： [SoundSink](sinks/sound.md)、[FeishuWebhookSink](sinks/feishu.md)
+- 内置 sinks： [内置 Sinks](sinks/README.md)
 - 集成： [集成与配置](integration.md)
 - 安全： [安全](security.md)
 

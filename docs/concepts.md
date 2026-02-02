@@ -26,7 +26,7 @@
 
 `Sink` 是一个抽象的“发送器”，负责把 `Event` 投递到某个外部系统/媒介。
 
-- 内置：`SoundSink` / `FeishuWebhookSink`
+- 内置：见 [内置 Sinks](sinks/README.md)
 - 扩展：实现 `Sink` trait 即可接入任何渠道
 
 ## Hub（通知中心）

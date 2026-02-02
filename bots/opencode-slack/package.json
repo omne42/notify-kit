@@ -6,7 +6,7 @@
     "start": "node ./src/index.mjs"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "latest",
-    "@slack/bolt": "^3.22.0"
+    "@opencode-ai/sdk": "^1.1.25",
+    "@slack/bolt": "^3.17.1"
   }
 }
