@@ -49,6 +49,30 @@ let sink = FeishuWebhookSink::new_with_secret_strict(cfg, "your_secret")?;
 - 建议：`HubConfig.per_sink_timeout` ≥ `FeishuWebhookConfig.timeout`
 - 如果你把 `Hub` 的超时设得更小，那么即使 HTTP 还没超时，也会被 `Hub` 先中断（drop future）
 
+## 消息长度
+
+`FeishuWebhookConfig.max_chars` 用于限制最终 text 消息长度（默认 `4000`）。超出会截断并追加 `...`：
+
+```rust
+use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
+
+let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx")
+    .with_max_chars(1000);
+let sink = FeishuWebhookSink::new(cfg)?;
+```
+
+## DNS 公网 IP 校验开关
+
+为降低 SSRF/DNS 污染风险，默认发送前会做一次 DNS 公网 IP 校验；如确有需要可关闭：
+
+```rust
+use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
+
+let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx")
+    .with_public_ip_check(false);
+let sink = FeishuWebhookSink::new(cfg)?;
+```
+
 ## 安全约束（重要）
 
 为降低 SSRF/凭据泄露风险，本库会对 webhook URL 做限制：

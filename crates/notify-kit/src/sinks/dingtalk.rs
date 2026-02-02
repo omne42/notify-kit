@@ -173,7 +173,10 @@ impl Sink for DingTalkWebhookSink {
                 ));
             }
 
-            let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
+            let Ok(body) = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await
+            else {
+                return Ok(());
+            };
 
             let errcode = body["errcode"].as_i64().unwrap_or(-1);
             if errcode == 0 {

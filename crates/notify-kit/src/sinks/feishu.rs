@@ -1,4 +1,4 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::Event;
 use crate::sinks::crypto::hmac_sha256_base64;
@@ -13,10 +13,13 @@ use crate::sinks::{BoxFuture, Sink};
 
 const FEISHU_MAX_CHARS: usize = 4000;
 
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct FeishuWebhookConfig {
     pub webhook_url: String,
-    pub timeout: std::time::Duration,
+    pub timeout: Duration,
+    pub max_chars: usize,
+    pub enforce_public_ip: bool,
 }
 
 impl std::fmt::Debug for FeishuWebhookConfig {
@@ -24,6 +27,8 @@ impl std::fmt::Debug for FeishuWebhookConfig {
         f.debug_struct("FeishuWebhookConfig")
             .field("webhook_url", &redact_url_str(&self.webhook_url))
             .field("timeout", &self.timeout)
+            .field("max_chars", &self.max_chars)
+            .field("enforce_public_ip", &self.enforce_public_ip)
             .finish()
     }
 }
@@ -32,8 +37,28 @@ impl FeishuWebhookConfig {
     pub fn new(webhook_url: impl Into<String>) -> Self {
         Self {
             webhook_url: webhook_url.into(),
-            timeout: std::time::Duration::from_secs(2),
+            timeout: Duration::from_secs(2),
+            max_chars: FEISHU_MAX_CHARS,
+            enforce_public_ip: true,
         }
+    }
+
+    #[must_use]
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_chars(mut self, max_chars: usize) -> Self {
+        self.max_chars = max_chars;
+        self
+    }
+
+    #[must_use]
+    pub fn with_public_ip_check(mut self, enforce_public_ip: bool) -> Self {
+        self.enforce_public_ip = enforce_public_ip;
+        self
     }
 }
 
@@ -41,6 +66,7 @@ pub struct FeishuWebhookSink {
     webhook_url: reqwest::Url,
     client: reqwest::Client,
     secret: Option<String>,
+    max_chars: usize,
     enforce_public_ip: bool,
 }
 
@@ -49,6 +75,7 @@ impl std::fmt::Debug for FeishuWebhookSink {
         f.debug_struct("FeishuWebhookSink")
             .field("webhook_url", &redact_url(&self.webhook_url))
             .field("secret", &self.secret.as_ref().map(|_| "<redacted>"))
+            .field("max_chars", &self.max_chars)
             .field("enforce_public_ip", &self.enforce_public_ip)
             .finish_non_exhaustive()
     }
@@ -56,11 +83,11 @@ impl std::fmt::Debug for FeishuWebhookSink {
 
 impl FeishuWebhookSink {
     pub fn new(config: FeishuWebhookConfig) -> anyhow::Result<Self> {
-        Self::new_internal(config, None, true, false)
+        Self::new_internal(config, None, false)
     }
 
     pub fn new_strict(config: FeishuWebhookConfig) -> anyhow::Result<Self> {
-        Self::new_internal(config, None, true, true)
+        Self::new_internal(config, None, true)
     }
 
     pub fn new_with_secret(
@@ -71,7 +98,7 @@ impl FeishuWebhookSink {
         if secret.trim().is_empty() {
             return Err(anyhow::anyhow!("feishu secret must not be empty"));
         }
-        Self::new_internal(config, Some(secret), true, false)
+        Self::new_internal(config, Some(secret), false)
     }
 
     pub fn new_with_secret_strict(
@@ -82,15 +109,15 @@ impl FeishuWebhookSink {
         if secret.trim().is_empty() {
             return Err(anyhow::anyhow!("feishu secret must not be empty"));
         }
-        Self::new_internal(config, Some(secret), true, true)
+        Self::new_internal(config, Some(secret), true)
     }
 
     fn new_internal(
         config: FeishuWebhookConfig,
         secret: Option<String>,
-        enforce_public_ip: bool,
         validate_public_ip_at_construction: bool,
     ) -> anyhow::Result<Self> {
+        let enforce_public_ip = config.enforce_public_ip;
         let webhook_url = parse_and_validate_https_url(
             &config.webhook_url,
             &["open.feishu.cn", "open.larksuite.com"],
@@ -104,12 +131,14 @@ impl FeishuWebhookSink {
             webhook_url,
             client,
             secret,
+            max_chars: config.max_chars,
             enforce_public_ip,
         })
     }
 
     fn build_payload(
         event: &Event,
+        max_chars: usize,
         timestamp: Option<&str>,
         sign: Option<&str>,
     ) -> serde_json::Value {
@@ -118,7 +147,7 @@ impl FeishuWebhookSink {
         obj.insert(
             "content".to_string(),
             serde_json::json!({
-                "text": format_event_text_limited(event, TextLimits::new(FEISHU_MAX_CHARS)),
+                "text": format_event_text_limited(event, TextLimits::new(max_chars)),
             }),
         );
         if let Some(timestamp) = timestamp {
@@ -156,7 +185,8 @@ impl Sink for FeishuWebhookSink {
                 (None, None)
             };
 
-            let payload = Self::build_payload(event, timestamp.as_deref(), sign.as_deref());
+            let payload =
+                Self::build_payload(event, self.max_chars, timestamp.as_deref(), sign.as_deref());
 
             let resp = self
                 .client
@@ -208,7 +238,7 @@ mod tests {
             .with_body("ok")
             .with_tag("thread_id", "t1");
 
-        let payload = FeishuWebhookSink::build_payload(&event, None, None);
+        let payload = FeishuWebhookSink::build_payload(&event, FEISHU_MAX_CHARS, None, None);
         assert_eq!(payload["msg_type"].as_str().unwrap_or(""), "text");
         let text = payload["content"]["text"].as_str().unwrap_or("");
         assert!(text.contains("done"));
@@ -256,8 +286,18 @@ mod tests {
     #[test]
     fn builds_payload_with_signature_fields() {
         let event = Event::new("kind", crate::Severity::Info, "title");
-        let payload = FeishuWebhookSink::build_payload(&event, Some("123"), Some("sig"));
+        let payload =
+            FeishuWebhookSink::build_payload(&event, FEISHU_MAX_CHARS, Some("123"), Some("sig"));
         assert_eq!(payload["timestamp"].as_str().unwrap_or(""), "123");
         assert_eq!(payload["sign"].as_str().unwrap_or(""), "sig");
+    }
+
+    #[test]
+    fn payload_respects_max_chars() {
+        let event = Event::new("kind", crate::Severity::Info, "title").with_body("x".repeat(100));
+        let payload = FeishuWebhookSink::build_payload(&event, 10, None, None);
+        let text = payload["content"]["text"].as_str().unwrap_or("");
+        assert!(text.chars().count() <= 10, "{text}");
+        assert!(text.ends_with("..."), "{text}");
     }
 }
