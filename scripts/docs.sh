@@ -19,22 +19,24 @@ fi
 cmd="${1:-serve}"
 case "$cmd" in
   serve)
-    mdbook serve "$repo_root/docs"
+    shift || true
+    mdbook serve "$repo_root/docs" "$@"
     ;;
   build)
-    mdbook build "$repo_root/docs"
+    shift || true
+    mdbook build "$repo_root/docs" "$@"
     ;;
   test)
-    mdbook test "$repo_root/docs"
+    shift || true
+    mdbook test "$repo_root/docs" "$@"
     ;;
   *)
     cat >&2 <<'EOF'
 Usage:
-  ./scripts/docs.sh serve   # local preview with search
-  ./scripts/docs.sh build   # build to target/mdbook/
-  ./scripts/docs.sh test    # mdbook link checks
+  ./scripts/docs.sh serve [mdbook args...]   # local preview with search
+  ./scripts/docs.sh build [mdbook args...]   # build to target/mdbook/
+  ./scripts/docs.sh test  [mdbook args...]   # mdbook link checks
 EOF
     exit 2
     ;;
 esac
-

@@ -47,6 +47,7 @@
 ## 快速导航
 
 - 入门： [快速开始](getting-started.md)
+- 示例： [Examples / Recipes](examples.md)
 - 概念： [核心概念](concepts.md)
 - API： [Hub](api/hub.md)、[Event](api/event.md)、[Sink](api/sink.md)
 - 内置 sinks： [内置 Sinks](sinks/README.md)

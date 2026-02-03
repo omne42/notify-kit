@@ -295,6 +295,34 @@ function verifySignatureOrThrow({ signature, timestamp, nonce, encrypted }) {
   }
 }
 
+const REPLAY_WINDOW_SECONDS = 5 * 60
+const REPLAY_CACHE_TTL_MS = 10 * 60 * 1000
+const replayCache = new Map()
+
+function isFreshTimestamp(timestamp) {
+  const ts = Number.parseInt(String(timestamp || ""), 10)
+  if (!Number.isFinite(ts) || ts <= 0) return false
+  const now = Math.floor(Date.now() / 1000)
+  return Math.abs(now - ts) <= REPLAY_WINDOW_SECONDS
+}
+
+function checkAndRememberReplay(signature, timestamp, nonce) {
+  const key = `${timestamp}:${nonce}:${signature}`
+  const now = Date.now()
+
+  // Cleanup expired entries (best-effort).
+  for (const [k, exp] of replayCache.entries()) {
+    if (exp <= now) replayCache.delete(k)
+  }
+
+  if (replayCache.has(key)) {
+    return false
+  }
+
+  replayCache.set(key, now + REPLAY_CACHE_TTL_MS)
+  return true
+}
+
 function sendTextResponse(res, status, body) {
   res.statusCode = status
   res.setHeader("content-type", "text/plain; charset=utf-8")
@@ -355,6 +383,8 @@ const server = http.createServer(async (req, res) => {
         if (!encrypted) return
 
         if (!signature || !timestamp || !nonce) return
+        if (!isFreshTimestamp(timestamp)) return
+        if (!checkAndRememberReplay(signature, timestamp, nonce)) return
         verifySignatureOrThrow({ signature, timestamp, nonce, encrypted })
 
         const { xmlText, receiver } = decryptWeCom(encrypted, process.env.WECOM_ENCODING_AES_KEY)

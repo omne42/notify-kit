@@ -35,6 +35,12 @@ cargo test --workspace
 ./scripts/docs.sh serve
 ```
 
+传参示例（容器/远程访问）：
+
+```bash
+./scripts/docs.sh serve --hostname 0.0.0.0 --port 3000
+```
+
 首次使用需要安装：
 
 ```bash

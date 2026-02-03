@@ -15,6 +15,16 @@ let sink = SoundSink::new(SoundConfig { command_argv: None });
 
 不同 `Severity` 会对应不同次数的 bell（用于区分提示强度）。
 
+### 让 macOS / Windows “闪一下”
+
+`SoundSink` 的默认行为是写入终端 bell（`\u{0007}`）。很多终端都支持把 bell 映射成“闪屏/标签闪烁/Dock 或任务栏提示”：
+
+- macOS Terminal.app：Settings → Profiles → Advanced → Bell（Visual bell / Bounce Dock icon）
+- iTerm2：Preferences → Profiles → Terminal → Notifications / Bells
+- Windows Terminal：Settings（启用/配置 Visual bell，或由系统/终端实现提示行为）
+
+`notify-kit` 只负责发出 bell；是否“闪”取决于你的终端/系统设置。
+
 ## 外部命令
 
 ```rust

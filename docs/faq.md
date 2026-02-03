@@ -34,3 +34,12 @@
 
 - 确认你使用的是群机器人 webhook 的标准域名
 - 不支持自定义代理域名（避免 SSRF 风险）
+
+## 如何让 TUI 在回复完成后让终端“闪一下”（macOS/Windows）？
+
+思路：在“回复完成”事件上触发 `SoundSink` 的终端 bell（`\u{0007}`）。
+
+- `notify-kit` 侧：使用 `SoundSink`（默认就是 bell）。
+- 终端/系统侧：需要你在终端设置里启用 Visual Bell / Dock/任务栏提示（不同终端选项不同，见 [SoundSink](sinks/sound.md)）。
+
+本仓库不包含具体 TUI 应用；你需要在你的 TUI 项目里在“reply completed / turn completed”处调用 `hub.notify(...)`。

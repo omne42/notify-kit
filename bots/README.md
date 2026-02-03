@@ -16,6 +16,18 @@ OpenCode 风格的飞书（Lark/Feishu）事件订阅 bot：把群聊映射为�
 
 见：`bots/opencode-feishu/README.md`
 
+## opencode-discord
+
+OpenCode 风格的 Discord bot（Gateway）：把 channel/thread 映射为会话，并在 channel 中输出会话分享链接与工具执行更新。
+
+见：`bots/opencode-discord/README.md`
+
+## opencode-telegram
+
+OpenCode 风格的 Telegram bot（long polling）：把 chat 映射为会话，并在 chat 中输出会话分享链接与工具执行更新。
+
+见：`bots/opencode-telegram/README.md`
+
 ## opencode-dingtalk-stream
 
 OpenCode 风格的钉钉 Stream Mode bot：把会话（sessionWebhook）映射为会话，并在群里输出会话分享链接与工具执行更新。

@@ -25,6 +25,29 @@ const client = new DWClient({
  */
 const sessions = new Map()
 
+function validateSessionWebhook(sessionWebhook) {
+  let url
+  try {
+    url = new URL(String(sessionWebhook || ""))
+  } catch {
+    return null
+  }
+
+  if (url.protocol !== "https:") return null
+  if (url.username || url.password) return null
+  if (url.port && url.port !== "443") return null
+
+  const host = url.hostname.toLowerCase()
+  const isDingTalkHost =
+    host === "dingtalk.com" ||
+    host.endsWith(".dingtalk.com") ||
+    host === "dingtalk.cn" ||
+    host.endsWith(".dingtalk.cn")
+  if (!isDingTalkHost) return null
+
+  return url.toString()
+}
+
 async function postSessionMessage(sessionWebhook, text) {
   const accessToken = await client.getAccessToken()
   await fetch(sessionWebhook, {
@@ -131,7 +154,7 @@ async function handleToolUpdate(part) {
 
 const downstream = new DWClientDownStream(client)
 downstream.registerCallbackListener(TOPIC_ROBOT, (res) => {
-  const sessionWebhook = res?.data?.sessionWebhook
+  const sessionWebhook = validateSessionWebhook(res?.data?.sessionWebhook)
   const content = res?.data?.text?.content
   if (!sessionWebhook || !content) return EventAck.SUCCESS
 

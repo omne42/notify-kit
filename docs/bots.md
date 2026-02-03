@@ -5,6 +5,8 @@
 本仓库也提供少量“上层 bot / 集成示例”，用于把某个平台的消息桥接到 OpenCode 会话（session）：
 
 - Slack：`bots/opencode-slack`（Socket Mode）
+- Discord：`bots/opencode-discord`（Gateway）
+- Telegram：`bots/opencode-telegram`（long polling）
 - 飞书：`bots/opencode-feishu`（事件订阅 Webhook）
 - 钉钉：`bots/opencode-dingtalk-stream`（Stream Mode）
 - GitHub：`bots/opencode-github-action`（GitHub Actions：issue/pr 评论触发）
@@ -21,6 +23,8 @@
 直接看各 bot 的 README：
 
 - `bots/opencode-slack/README.md`
+- `bots/opencode-discord/README.md`
+- `bots/opencode-telegram/README.md`
 - `bots/opencode-feishu/README.md`
 - `bots/opencode-dingtalk-stream/README.md`
 - `bots/opencode-github-action/README.md`
