@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use crate::Event;
 use crate::sinks::http::{
-    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, build_http_client_pinned_async,
-    parse_and_validate_https_url, parse_and_validate_https_url_basic, read_json_body_limited,
-    redact_url, sanitize_reqwest_error, validate_url_path_prefix,
+    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
+    parse_and_validate_https_url_basic, read_json_body_limited, redact_url, select_http_client,
+    send_reqwest, validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_body_and_tags_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
@@ -161,25 +161,21 @@ impl Sink for ServerChanSink {
 
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            let client = if self.enforce_public_ip {
-                build_http_client_pinned_async(self.timeout, self.api_url.clone()).await?
-            } else {
-                self.client.clone()
-            };
+            let client = select_http_client(
+                &self.client,
+                self.timeout,
+                &self.api_url,
+                self.enforce_public_ip,
+            )
+            .await?;
 
             let payload = Self::build_payload(event, self.max_chars);
 
-            let resp = client
-                .post(self.api_url.clone())
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| {
-                    anyhow::anyhow!(
-                        "serverchan request failed ({})",
-                        sanitize_reqwest_error(&err)
-                    )
-                })?;
+            let resp = send_reqwest(
+                client.post(self.api_url.clone()).json(&payload),
+                "serverchan",
+            )
+            .await?;
 
             let status = resp.status();
             if !status.is_success() {

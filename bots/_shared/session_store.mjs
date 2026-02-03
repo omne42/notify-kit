@@ -33,10 +33,26 @@ async function atomicWriteUtf8(filePath, content) {
 
 let exitHooksInstalled = false
 
-export function createSessionStore(filePath, { flushDebounceMs = 250 } = {}) {
+function resolveStorePath(filePath, rootDir) {
+  const raw = String(filePath || "").trim()
+  if (!raw) return null
+
+  const root = rootDir && String(rootDir).trim() !== "" ? path.resolve(String(rootDir)) : null
+  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(root || process.cwd(), raw)
+
+  if (!root) return resolved
+
+  const rel = path.relative(root, resolved)
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(`session store path must be within rootDir: ${root}`)
+  }
+
+  return resolved
+}
+
+export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = null } = {}) {
   const map = new Map()
-  const enabled = Boolean(filePath && String(filePath).trim() !== "")
-  const storePath = enabled ? String(filePath) : null
+  const storePath = resolveStorePath(filePath, rootDir)
 
   let flushTimer = null
   let pending = Promise.resolve()
@@ -103,4 +119,3 @@ export function createSessionStore(filePath, { flushDebounceMs = 250 } = {}) {
     installExitHooks,
   }
 }
-

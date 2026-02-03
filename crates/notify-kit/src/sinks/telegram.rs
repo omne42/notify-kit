@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::Event;
 use crate::sinks::http::{
     DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, read_json_body_limited, redact_url,
-    sanitize_reqwest_error,
+    send_reqwest,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
@@ -116,15 +116,11 @@ impl Sink for TelegramBotSink {
         Box::pin(async move {
             let payload = Self::build_payload(event, &self.chat_id, self.max_chars);
 
-            let resp = self
-                .client
-                .post(self.api_url.clone())
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| {
-                    anyhow::anyhow!("telegram request failed ({})", sanitize_reqwest_error(&err))
-                })?;
+            let resp = send_reqwest(
+                self.client.post(self.api_url.clone()).json(&payload),
+                "telegram",
+            )
+            .await?;
 
             let status = resp.status();
             if !status.is_success() {

@@ -59,6 +59,7 @@ notify-kit = { path = "crates/notify-kit" }
 
 - 如果当前没有 Tokio runtime：`notify` 会丢弃通知并 `tracing::warn!`；可用 `Hub::try_notify` 检测。
 - 如果需要可观测结果：用 `Hub::send(event).await`（会等待所有 sinks 完成/超时）。
+- 注意：`HubConfig.per_sink_timeout` 是 Hub 对每个 sink 的兜底超时；如果你把某个 sink 的 `timeout` 调大，也需要把 `per_sink_timeout` 调到 >= 该值，否则 Hub 可能会先超时。
 
 最小示例（需要在 Tokio runtime 中调用）：
 

@@ -18,7 +18,9 @@ const opencode = await createOpencode({ port: 0 })
 console.log("✅ Opencode server ready")
 
 const limiter = createLimiter({ maxInflight: process.env.OPENCODE_BOT_MAX_INFLIGHT || "4" })
-const store = createSessionStore(process.env.OPENCODE_SESSION_STORE_PATH)
+const store = createSessionStore(process.env.OPENCODE_SESSION_STORE_PATH, {
+  rootDir: process.env.OPENCODE_SESSION_STORE_ROOT || process.cwd(),
+})
 await store.load()
 store.installExitHooks()
 if (store.enabled) {

@@ -88,6 +88,18 @@ pub(crate) fn sanitize_reqwest_error(err: &reqwest::Error) -> &'static str {
     }
 }
 
+pub(crate) async fn send_reqwest(
+    builder: reqwest::RequestBuilder,
+    context: &str,
+) -> anyhow::Result<reqwest::Response> {
+    builder.send().await.map_err(|err| {
+        anyhow::anyhow!(
+            "{context} request failed ({})",
+            sanitize_reqwest_error(&err)
+        )
+    })
+}
+
 pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> anyhow::Result<()> {
     let path = url.path();
     if path.starts_with(prefix) {
@@ -148,6 +160,19 @@ pub(crate) async fn build_http_client_pinned_async(
         .resolve_to_addrs(&host, &addrs)
         .build()
         .map_err(|err| anyhow::anyhow!("build reqwest client: {err}"))
+}
+
+pub(crate) async fn select_http_client(
+    base_client: &reqwest::Client,
+    timeout: Duration,
+    url: &reqwest::Url,
+    enforce_public_ip: bool,
+) -> anyhow::Result<reqwest::Client> {
+    if enforce_public_ip {
+        build_http_client_pinned_async(timeout, url.clone()).await
+    } else {
+        Ok(base_client.clone())
+    }
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -241,9 +266,25 @@ fn is_public_ipv6(addr: Ipv6Addr) -> bool {
 }
 
 pub(crate) async fn read_json_body_limited(
-    mut resp: reqwest::Response,
+    resp: reqwest::Response,
     max_bytes: usize,
 ) -> anyhow::Result<serde_json::Value> {
+    let buf = read_body_bytes_limited(resp, max_bytes).await?;
+    serde_json::from_slice(&buf).map_err(|_| anyhow::anyhow!("decode json failed"))
+}
+
+pub(crate) async fn read_text_body_limited(
+    resp: reqwest::Response,
+    max_bytes: usize,
+) -> anyhow::Result<String> {
+    let buf = read_body_bytes_limited(resp, max_bytes).await?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+async fn read_body_bytes_limited(
+    mut resp: reqwest::Response,
+    max_bytes: usize,
+) -> anyhow::Result<Vec<u8>> {
     if max_bytes == 0 {
         return Err(anyhow::anyhow!(
             "response body too large (response body omitted)"
@@ -273,7 +314,7 @@ pub(crate) async fn read_json_body_limited(
         buf.extend_from_slice(&chunk);
     }
 
-    serde_json::from_slice(&buf).map_err(|_| anyhow::anyhow!("decode json failed"))
+    Ok(buf)
 }
 
 #[cfg(test)]

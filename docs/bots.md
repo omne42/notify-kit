@@ -32,5 +32,6 @@
 
 ## 重要说明
 
-- 这些示例默认只做内存映射（重启会丢失映射）；生产环境应把映射持久化（KV/DB）。
+- 这些示例默认用内存映射；可通过 `OPENCODE_SESSION_STORE_PATH` 启用简单文件持久化（适合 demo/单实例），生产环境建议用 DB/KV。
+- 为避免路径误用，session store 支持设置根目录：`OPENCODE_SESSION_STORE_ROOT`（store path 必须在该目录下）。
 - 对于飞书/钉钉/企微等平台：**“群机器人 webhook”通常只能发消息**，想做“交互式 bot”需要使用事件订阅/Stream/回调机制。

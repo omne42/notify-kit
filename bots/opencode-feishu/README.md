@@ -39,4 +39,4 @@ npm start
 
 ## 说明
 
-- 该 bot 会在本地启动一个 OpenCode server（端口随机），并在内存中维护 chat → session 的映射；重启后映射会丢失。
+- 该 bot 会在本地启动一个 OpenCode server（端口随机）。默认在内存中维护 chat → session 的映射；如设置 `OPENCODE_SESSION_STORE_PATH`（例如 `.opencode/sessions.json`），会把映射持久化到文件，重启后可恢复（可选：用 `OPENCODE_SESSION_STORE_ROOT` 限制 store 路径根目录）。

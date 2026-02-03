@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use crate::Event;
-use crate::sinks::http::{build_http_client, redact_url, sanitize_reqwest_error};
+use crate::sinks::http::{build_http_client, redact_url, send_reqwest};
 use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
 
@@ -162,22 +162,17 @@ impl Sink for GitHubCommentSink {
         Box::pin(async move {
             let payload = Self::build_payload(event, self.max_chars);
 
-            let resp = self
-                .client
-                .post(self.api_url.clone())
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "notify-kit")
-                .header("X-GitHub-Api-Version", "2022-11-28")
-                .bearer_auth(&self.token)
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| {
-                    anyhow::anyhow!(
-                        "github comment request failed ({})",
-                        sanitize_reqwest_error(&err)
-                    )
-                })?;
+            let resp = send_reqwest(
+                self.client
+                    .post(self.api_url.clone())
+                    .header("Accept", "application/vnd.github+json")
+                    .header("User-Agent", "notify-kit")
+                    .header("X-GitHub-Api-Version", "2022-11-28")
+                    .bearer_auth(&self.token)
+                    .json(&payload),
+                "github comment",
+            )
+            .await?;
 
             let status = resp.status();
             if status.is_success() {

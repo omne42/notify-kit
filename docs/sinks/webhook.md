@@ -55,5 +55,5 @@ let sink = GenericWebhookSink::new_strict(cfg)?;
 
 ## 安全提示
 
-- 默认会做 DNS 公网 IP 校验（可通过 `with_public_ip_check(false)` 关闭）。
+- 默认会做 DNS 公网 IP 校验（可通过 `with_public_ip_check(false)` 关闭；出于安全考虑，关闭时必须同时配置 `allowed_hosts`）。
 - 如果你使用 `allowed_hosts`，建议把它视为安全边界（不要从不可信输入构造）；不确定时用上面的严格模式。

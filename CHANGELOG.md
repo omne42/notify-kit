@@ -20,6 +20,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-wecom`：OpenCode 风格的企业微信（WeCom）回调 bot 示例（消息回调 → session）。
 - `bots/opencode-discord`：OpenCode 风格的 Discord bot 示例（channel/thread → session）。
 - `bots/opencode-telegram`：OpenCode 风格的 Telegram bot 示例（chat → session，long polling）。
+- `bots/_shared/session_store`：支持设置根目录（`rootDir`；bots 可用 `OPENCODE_SESSION_STORE_ROOT`）以限制 session store 文件路径。
 - CI: GitHub Actions workflow（`./.github/workflows/ci.yml`）。
 - Docs: 刷新 `docs/README.md`/`docs/concepts.md` 的内置 sinks 列表；`.gitignore` 忽略 `node_modules/`。
 - Docs: 新增 mdBook 本地预览（含搜索）（`docs/book.toml` + `./scripts/docs.sh`）。
@@ -45,6 +46,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
 - All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
+- `GenericWebhookSink`：关闭 DNS 公网 IP 校验时，要求同时配置 `allowed_hosts`（减少 SSRF 风险）。
 - Docs: 统一为 mdBook 文档（`./scripts/docs.sh` 本地预览/测试）。
 - Dev: 在提交门禁中增加 bot 示例的 Node.js 语法校验（不要求安装依赖）。
 - Docs: 重构 `docs/SUMMARY.md` 的信息架构（Overview / Getting Started / Guides / Reference / Sinks）。
@@ -56,7 +58,10 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `SoundSink`：拒绝空 program 的错误配置。
 - `FeishuWebhookConfig`/`FeishuWebhookSink`：`Debug` 输出不再泄露完整 webhook URL。
 - `SoundSink`：调整测试模块位置以通过 clippy（`items_after_test_module`）。
-- `dingtalk` / `wecom` sink：2xx 响应但 body 非 JSON/读取失败时不再误判为失败（只在明确 errcode 非 0 时失败）。
+- `SlackWebhookSink`：2xx 响应时会读取并校验响应 body（避免 200 + 错误文本被误判为成功）。
+- `dingtalk` / `wecom` / `feishu` sinks：2xx 响应但 body 非 JSON/读取失败时不再误判为成功（解析失败会返回错误）。
+- `BarkSink`：补充 API 级错误判断（当响应为 JSON 且包含 `code` 时），并在非 2xx 时附带截断后的响应摘要。
+- `DiscordWebhookSink` / `GenericWebhookSink`：非 2xx 时附带截断后的响应摘要，便于定位问题。
 - `serverchan` sink：错误信息不再回显第三方返回的 message（保持低敏感）。
 - Webhook/API sinks: 修复 `enforce_public_ip` 打开时未实际使用 pinned client 的问题。
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：严格模式下禁止关闭公网 IP 校验。

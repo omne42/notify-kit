@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use crate::Event;
 use crate::sinks::http::{
-    build_http_client, build_http_client_pinned_async, parse_and_validate_https_url, redact_url,
-    sanitize_reqwest_error, validate_url_path_prefix,
+    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
+    read_text_body_limited, redact_url, select_http_client, send_reqwest, validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_body_and_tags_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
@@ -142,11 +142,13 @@ impl Sink for BarkSink {
 
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            let client = if self.enforce_public_ip {
-                build_http_client_pinned_async(self.timeout, self.api_url.clone()).await?
-            } else {
-                self.client.clone()
-            };
+            let client = select_http_client(
+                &self.client,
+                self.timeout,
+                &self.api_url,
+                self.enforce_public_ip,
+            )
+            .await?;
 
             let payload = Self::build_payload(
                 event,
@@ -155,22 +157,56 @@ impl Sink for BarkSink {
                 self.max_chars,
             );
 
-            let resp = client
-                .post(self.api_url.clone())
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| {
-                    anyhow::anyhow!("bark request failed ({})", sanitize_reqwest_error(&err))
-                })?;
+            let resp =
+                send_reqwest(client.post(self.api_url.clone()).json(&payload), "bark").await?;
 
             let status = resp.status();
-            if status.is_success() {
+            if !status.is_success() {
+                let body = read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
+                let summary = truncate_chars(body.trim(), 200);
+                if summary.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "bark http error: {status} (response body omitted)"
+                    ));
+                }
+                return Err(anyhow::anyhow!(
+                    "bark http error: {status}, response={summary} (response body omitted)"
+                ));
+            }
+
+            let content_type_is_json = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.to_ascii_lowercase().contains("application/json"));
+            if !content_type_is_json {
                 return Ok(());
             }
 
+            let body = read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
+            let body = body.trim();
+            if body.is_empty() {
+                return Ok(());
+            }
+            let body: serde_json::Value =
+                serde_json::from_str(body).map_err(|_| anyhow::anyhow!("decode json failed"))?;
+
+            let Some(code) = body.get("code").and_then(|v| v.as_i64()) else {
+                return Ok(());
+            };
+            if code == 200 {
+                return Ok(());
+            }
+
+            let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            let message = truncate_chars(message, 200);
+            if message.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "bark api error: code={code} (response body omitted)"
+                ));
+            }
             Err(anyhow::anyhow!(
-                "bark http error: {status} (response body omitted)"
+                "bark api error: code={code}, message={message} (response body omitted)"
             ))
         })
     }

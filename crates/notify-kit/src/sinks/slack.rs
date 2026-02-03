@@ -2,10 +2,11 @@ use std::time::Duration;
 
 use crate::Event;
 use crate::sinks::http::{
-    build_http_client, build_http_client_pinned_async, parse_and_validate_https_url, redact_url,
-    redact_url_str, sanitize_reqwest_error, validate_url_path_prefix,
+    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
+    read_text_body_limited, redact_url, redact_url_str, select_http_client, send_reqwest,
+    validate_url_path_prefix,
 };
-use crate::sinks::text::{TextLimits, format_event_text_limited};
+use crate::sinks::text::{TextLimits, format_event_text_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
 
 const SLACK_ALLOWED_HOSTS: [&str; 1] = ["hooks.slack.com"];
@@ -103,32 +104,44 @@ impl Sink for SlackWebhookSink {
 
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            let client = if self.enforce_public_ip {
-                build_http_client_pinned_async(self.timeout, self.webhook_url.clone()).await?
-            } else {
-                self.client.clone()
-            };
+            let client = select_http_client(
+                &self.client,
+                self.timeout,
+                &self.webhook_url,
+                self.enforce_public_ip,
+            )
+            .await?;
             let payload = Self::build_payload(event, self.max_chars);
 
-            let resp = client
-                .post(self.webhook_url.clone())
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| {
-                    anyhow::anyhow!(
-                        "slack webhook request failed ({})",
-                        sanitize_reqwest_error(&err)
-                    )
-                })?;
-
+            let resp = send_reqwest(
+                client.post(self.webhook_url.clone()).json(&payload),
+                "slack webhook",
+            )
+            .await?;
             let status = resp.status();
-            if status.is_success() {
+            let body = read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
+            let body = body.trim();
+
+            if !status.is_success() {
+                let summary = truncate_chars(body, 200);
+                if summary.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "slack webhook http error: {status} (response body omitted)"
+                    ));
+                }
+
+                return Err(anyhow::anyhow!(
+                    "slack webhook http error: {status}, response={summary} (response body omitted)"
+                ));
+            }
+
+            if body.is_empty() || body.eq_ignore_ascii_case("ok") {
                 return Ok(());
             }
 
+            let summary = truncate_chars(body, 200);
             Err(anyhow::anyhow!(
-                "slack webhook http error: {status} (response body omitted)"
+                "slack webhook api error: response={summary} (response body omitted)"
             ))
         })
     }

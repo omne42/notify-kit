@@ -30,6 +30,10 @@ pub struct HubConfig {
     /// - `Some(set)`: only allow event kinds present in the set.
     pub enabled_kinds: Option<BTreeSet<String>>,
     /// Per-sink timeout to ensure notifications never block the caller.
+    ///
+    /// This is a **hard upper bound** enforced by `Hub` (via `tokio::time::timeout`) around each
+    /// `Sink::send`. If a sink has its own internal timeout (e.g. an HTTP request timeout), keep
+    /// `per_sink_timeout` >= that value, otherwise `Hub` may time out first.
     pub per_sink_timeout: Duration,
 }
 
@@ -76,6 +80,11 @@ impl Hub {
         }
     }
 
+    /// Fire-and-forget notification.
+    ///
+    /// - Requires a Tokio runtime; if none is present, the notification is dropped and a warning is
+    ///   logged.
+    /// - Concurrency is bounded; if overloaded, notifications are dropped (with a warning).
     pub fn notify(&self, event: Event) {
         let kind = event.kind.clone();
         if let Err(err) = self.try_notify(event) {
@@ -83,6 +92,9 @@ impl Hub {
         }
     }
 
+    /// Attempt to enqueue a fire-and-forget notification.
+    ///
+    /// Returns `Err(TryNotifyError::NoTokioRuntime)` if called outside a Tokio runtime.
     pub fn try_notify(&self, event: Event) -> Result<(), TryNotifyError> {
         if !self.is_kind_enabled(event.kind.as_str()) {
             return Ok(());

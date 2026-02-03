@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use crate::Event;
 use crate::sinks::http::{
-    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, build_http_client_pinned_async,
-    parse_and_validate_https_url, read_json_body_limited, redact_url, redact_url_str,
-    sanitize_reqwest_error, validate_url_path_prefix,
+    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
+    read_json_body_limited, redact_url, redact_url_str, select_http_client, send_reqwest,
+    validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
@@ -107,24 +107,20 @@ impl Sink for WeComWebhookSink {
 
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            let client = if self.enforce_public_ip {
-                build_http_client_pinned_async(self.timeout, self.webhook_url.clone()).await?
-            } else {
-                self.client.clone()
-            };
+            let client = select_http_client(
+                &self.client,
+                self.timeout,
+                &self.webhook_url,
+                self.enforce_public_ip,
+            )
+            .await?;
             let payload = Self::build_payload(event, self.max_chars);
 
-            let resp = client
-                .post(self.webhook_url.clone())
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|err| {
-                    anyhow::anyhow!(
-                        "wecom webhook request failed ({})",
-                        sanitize_reqwest_error(&err)
-                    )
-                })?;
+            let resp = send_reqwest(
+                client.post(self.webhook_url.clone()).json(&payload),
+                "wecom webhook",
+            )
+            .await?;
 
             let status = resp.status();
             if !status.is_success() {
@@ -133,11 +129,7 @@ impl Sink for WeComWebhookSink {
                 ));
             }
 
-            let Ok(body) = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await
-            else {
-                return Ok(());
-            };
-
+            let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
             let errcode = body["errcode"].as_i64().unwrap_or(-1);
             if errcode == 0 {
                 return Ok(());
