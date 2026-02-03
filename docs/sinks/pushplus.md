@@ -4,16 +4,24 @@
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{PushPlusConfig, PushPlusSink};
 
 let cfg = PushPlusConfig::new("your_token");
 let sink = PushPlusSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 可选：设置 channel / topic / template：
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{PushPlusConfig, PushPlusSink};
 
 let cfg = PushPlusConfig::new("your_token")
@@ -21,6 +29,8 @@ let cfg = PushPlusConfig::new("your_token")
     .with_template("txt")
     .with_topic("my_topic");
 let sink = PushPlusSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 ## 超时

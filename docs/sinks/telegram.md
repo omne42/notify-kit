@@ -4,7 +4,10 @@
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use std::time::Duration;
 
 use notify_kit::{TelegramBotConfig, TelegramBotSink};
@@ -14,6 +17,8 @@ let cfg = TelegramBotConfig::new("bot_token", "chat_id")
     .with_max_chars(4096);
 
 let sink = TelegramBotSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 ## 安全约束（重要）
@@ -32,4 +37,3 @@ let sink = TelegramBotSink::new(cfg)?;
 ## 长度限制
 
 `TelegramBotConfig.max_chars` 用于限制最终消息长度（超出会截断并追加 `...`）。
-

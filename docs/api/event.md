@@ -1,6 +1,7 @@
 # Event
 
-```rust
+```rust,no_run,edition2021
+# extern crate notify_kit;
 use notify_kit::{Event, Severity};
 
 let event = Event::new("turn_completed", Severity::Success, "done")

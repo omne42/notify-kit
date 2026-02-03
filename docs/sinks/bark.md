@@ -4,20 +4,30 @@
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{BarkConfig, BarkSink};
 
 let cfg = BarkConfig::new("your_device_key");
 let sink = BarkSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 可选：设置 group：
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{BarkConfig, BarkSink};
 
 let cfg = BarkConfig::new("your_device_key").with_group("opencode");
 let sink = BarkSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 ## 超时

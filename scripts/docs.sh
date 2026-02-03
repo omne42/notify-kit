@@ -28,14 +28,19 @@ case "$cmd" in
     ;;
   test)
     shift || true
-    mdbook test "$repo_root/docs" "$@"
+    docs_target_dir="$repo_root/target/mdbook-test"
+    (
+      cd "$repo_root"
+      CARGO_TARGET_DIR="$docs_target_dir" cargo build -p notify-kit
+    )
+    mdbook test -L "$docs_target_dir/debug/deps" "$@" "$repo_root/docs"
     ;;
   *)
     cat >&2 <<'EOF'
 Usage:
   ./scripts/docs.sh serve [mdbook args...]   # local preview with search
   ./scripts/docs.sh build [mdbook args...]   # build to target/mdbook/
-  ./scripts/docs.sh test  [mdbook args...]   # mdbook link checks
+  ./scripts/docs.sh test  [mdbook args...]   # compile Rust code snippets (requires cargo build)
 EOF
     exit 2
     ;;

@@ -4,7 +4,10 @@
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use std::time::Duration;
 
 use notify_kit::{DiscordWebhookConfig, DiscordWebhookSink};
@@ -16,6 +19,8 @@ let cfg = DiscordWebhookConfig::new("https://discord.com/api/webhooks/xxx")
     .with_public_ip_check(false);
 
 let sink = DiscordWebhookSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 ## 安全约束（重要）

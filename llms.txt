@@ -275,7 +275,7 @@ notify-kit = { path = "../notify-kit/crates/notify-kit" }
 
 `Hub::notify` 需要在 **Tokio runtime** 中调用（否则会丢弃并 `tracing::warn!`）。
 
-```rust
+```rust,no_run,edition2021
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -284,14 +284,7 @@ use notify_kit::{
     Event, Hub, HubConfig, Severity, Sink, SoundConfig, SoundSink, TryNotifyError,
 };
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
-    // 你的应用应该初始化 tracing subscriber，这样才能看到 `notify-kit` 的 warn 日志。
-    // 这里仅作为示例：你也可以使用自己项目里的 tracing 配置。
-    //
-    // tracing_subscriber = "0.3"
-    tracing_subscriber::fmt::init();
-
+fn main() -> anyhow::Result<()> {
     // 组合多个 sinks（示例只启用 sound）
     let sinks: Vec<Arc<dyn Sink>> = vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))];
 
@@ -307,22 +300,32 @@ async fn main() -> anyhow::Result<()> {
         sinks,
     );
 
-    // fire-and-forget（不关心结果）
-    hub.notify(Event::new("turn_completed", Severity::Success, "done"));
+    // `notify-kit` 需要在 Tokio runtime 中运行；这里用一个最小 runtime 来演示。
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("build tokio runtime");
 
-    // 可观测结果（等待所有 sinks）
-    hub.send(Event::new("turn_completed", Severity::Success, "done (awaited)"))
-        .await?;
+    rt.block_on(async {
+        // fire-and-forget（不关心结果）
+        hub.notify(Event::new("turn_completed", Severity::Success, "done"));
 
-    // 如果你处在“不确定是否有 Tokio runtime”的代码路径中：
-    match hub.try_notify(Event::new("turn_completed", Severity::Success, "done (try_notify)")) {
-        Ok(()) => {}
-        Err(TryNotifyError::NoTokioRuntime) => {
-            // 这里不要 panic：notify 只是附加能力。
-            // 你可以选择：记录日志、降级为 stdout、暂存到队列里、或忽略。
-            tracing::debug!("no tokio runtime; notification skipped");
+        // 可观测结果（等待所有 sinks）
+        hub.send(Event::new("turn_completed", Severity::Success, "done (awaited)"))
+            .await?;
+
+        // 如果你处在“不确定是否有 Tokio runtime”的代码路径中：
+        match hub.try_notify(Event::new("turn_completed", Severity::Success, "done (try_notify)")) {
+            Ok(()) => {}
+            Err(TryNotifyError::NoTokioRuntime) => {
+                // 这里不要 panic：notify 只是附加能力。
+                // 你可以选择：记录日志、降级为 stdout、暂存到队列里、或忽略。
+                tracing::debug!("no tokio runtime; notification skipped");
+            }
         }
-    }
+
+        Ok::<_, anyhow::Error>(())
+    })?;
 
     Ok(())
 }
@@ -338,7 +341,7 @@ async fn main() -> anyhow::Result<()> {
 
 ### 同时启用多个 sinks
 
-```rust
+```rust,no_run,edition2021
 use std::sync::Arc;
 
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink, Sink, SoundConfig, SoundSink};
@@ -354,7 +357,7 @@ sinks.push(Arc::new(FeishuWebhookSink::new(FeishuWebhookConfig::new(
 
 ### 事件过滤（只发你关心的 kind）
 
-```rust
+```rust,no_run,edition2021
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -367,7 +370,6 @@ let cfg = HubConfig {
 };
 ```
 
-
 ---
 ## docs/examples.md
 
@@ -379,7 +381,7 @@ let cfg = HubConfig {
 
 ## 1) CLI：任务完成时响铃（并可在终端里配置 Dock/任务栏闪烁）
 
-```rust
+```rust,no_run,edition2021
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity, SoundConfig, SoundSink};
@@ -389,14 +391,18 @@ let hub = Hub::new(
     vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))],
 );
 
-hub.notify(Event::new("task_done", Severity::Success, "done"));
+let rt = tokio::runtime::Builder::new_current_thread()
+    .enable_time()
+    .build()
+    .expect("build tokio runtime");
+rt.block_on(hub.send(Event::new("task_done", Severity::Success, "done")))?;
 ```
 
 提示：如果你希望“macOS Dock/Windows 任务栏闪一下”，通常需要在终端设置里开启 Visual Bell / Bounce（见 [SoundSink](sinks/sound.md)）。
 
 ## 2) 服务端：关键错误同时发到多个渠道
 
-```rust
+```rust,no_run,edition2021
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity, SoundConfig, SoundSink};
@@ -408,12 +414,18 @@ let sink_feishu = Arc::new(FeishuWebhookSink::new(FeishuWebhookConfig::new(
 ))?);
 
 let hub = Hub::new(HubConfig::default(), vec![sink_sound, sink_feishu]);
-hub.notify(Event::new("fatal", Severity::Error, "service crashed").with_body("trace id: ..."));
+let rt = tokio::runtime::Builder::new_current_thread()
+    .enable_time()
+    .build()
+    .expect("build tokio runtime");
+rt.block_on(hub.send(
+    Event::new("fatal", Severity::Error, "service crashed").with_body("trace id: ..."),
+))?;
 ```
 
 ## 3) CI：失败时发到通用 webhook
 
-```rust
+```rust,no_run,edition2021
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity};
@@ -426,12 +438,16 @@ let sink = Arc::new(GenericWebhookSink::new_strict(GenericWebhookConfig::new_str
 ))?);
 
 let hub = Hub::new(HubConfig::default(), vec![sink]);
-hub.notify(Event::new("ci_failed", Severity::Error, "build failed"));
+let rt = tokio::runtime::Builder::new_current_thread()
+    .enable_time()
+    .build()
+    .expect("build tokio runtime");
+rt.block_on(hub.send(Event::new("ci_failed", Severity::Error, "build failed")))?;
 ```
 
 ## 4) Agent：只打开少数事件（kind allow-list）
 
-```rust
+```rust,no_run,edition2021
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -451,7 +467,6 @@ hub.notify(Event::new("turn_completed", Severity::Success, "done"));
 hub.notify(Event::new("debug_noise", Severity::Info, "ignored"));
 ```
 
-
 ---
 ## docs/integration.md
 
@@ -461,7 +476,7 @@ hub.notify(Event::new("debug_noise", Severity::Info, "ignored"));
 
 ## 一个推荐的配置层结构
 
-```
+```text
 your-app
   ├─ config (env/cli/file)
   ├─ notify (integration layer)
@@ -485,7 +500,7 @@ your-app
 
 对应到 integration 层的伪代码：
 
-```rust
+```rust,no_run,edition2021
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -604,7 +619,7 @@ cargo run -p omne-agent-app-server --features notify
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use std::sync::Arc;
 use notify_kit::{Hub, HubConfig, SoundConfig, SoundSink};
 
@@ -616,7 +631,7 @@ let hub = Hub::new(
 
 如果你需要对 `notify()` 的后台并发做背压（避免事件洪泛导致无界 spawn），可以用：
 
-```rust
+```rust,no_run,edition2021
 use std::sync::Arc;
 use notify_kit::{Hub, HubConfig, SoundConfig, SoundSink};
 
@@ -640,7 +655,7 @@ let hub = Hub::new_with_inflight_limit(
 
 一个更完整的配置示例：
 
-```rust
+```rust,no_run,edition2021
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -666,7 +681,7 @@ let cfg = HubConfig {
 - **每个 sink 单独超时**：由 `per_sink_timeout` 控制；超时会被视为该 sink 失败。
 - **错误聚合**：当一个或多个 sinks 失败时，会返回一个聚合错误，内容类似：
 
-```
+```text
 one or more sinks failed:
 - feishu: timeout after 2s
 - sound: boom
@@ -677,7 +692,7 @@ one or more sinks failed:
 
 # Event
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{Event, Severity};
 
 let event = Event::new("turn_completed", Severity::Success, "done")
@@ -714,9 +729,11 @@ let event = Event::new("turn_completed", Severity::Success, "done")
 
 `Sink` 是你扩展通知渠道的核心抽象：
 
-```rust
+```rust,no_run,edition2021
 use std::future::Future;
 use std::pin::Pin;
+
+use notify_kit::Event;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -733,7 +750,7 @@ pub trait Sink: Send + Sync {
 
 ## 实现模板
 
-```rust
+```rust,no_run,edition2021
 use std::future::Future;
 use std::pin::Pin;
 
@@ -819,7 +836,7 @@ impl Sink for MySink {
 
 ## 终端 bell（默认）
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{SoundConfig, SoundSink};
 
 let sink = SoundSink::new(SoundConfig { command_argv: None });
@@ -839,7 +856,7 @@ let sink = SoundSink::new(SoundConfig { command_argv: None });
 
 ## 外部命令
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{SoundConfig, SoundSink};
 
 let sink = SoundSink::new(SoundConfig {
@@ -872,7 +889,7 @@ let sink = SoundSink::new(SoundConfig {
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
@@ -881,7 +898,7 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 默认发送前会做 DNS 公网 IP 校验；如果你希望在 **构造阶段** 也校验一次（可能导致无网络时构造失败），可以用：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
@@ -892,7 +909,7 @@ let sink = FeishuWebhookSink::new_strict(cfg)?;
 
 如果群机器人开启了 “签名校验”，可以用：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
@@ -903,7 +920,7 @@ let sink = FeishuWebhookSink::new_with_secret(cfg, "your_secret")?;
 
 如果你需要同时启用签名 + DNS 公网 IP 校验，并且希望在 **构造阶段** 也校验一次，可以用：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
@@ -921,7 +938,7 @@ let sink = FeishuWebhookSink::new_with_secret_strict(cfg, "your_secret")?;
 
 `FeishuWebhookConfig.max_chars` 用于限制最终 text 消息长度（默认 `4000`）。超出会截断并追加 `...`：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx")
@@ -933,7 +950,7 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 为降低 SSRF/DNS 污染风险，默认发送前会做一次 DNS 公网 IP 校验；如确有需要可关闭：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx")
@@ -980,7 +997,7 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{GitHubCommentConfig, GitHubCommentSink};
 
 let cfg = GitHubCommentConfig::new("owner", "repo", 123, "ghp_xxx");
@@ -1014,7 +1031,7 @@ let sink = GitHubCommentSink::new(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use std::time::Duration;
 
 use notify_kit::{SlackWebhookConfig, SlackWebhookSink};
@@ -1062,7 +1079,7 @@ let sink = SlackWebhookSink::new(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use std::time::Duration;
 
 use notify_kit::{DiscordWebhookConfig, DiscordWebhookSink};
@@ -1110,7 +1127,7 @@ let sink = DiscordWebhookSink::new(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use std::time::Duration;
 
 use notify_kit::{TelegramBotConfig, TelegramBotSink};
@@ -1139,7 +1156,6 @@ let sink = TelegramBotSink::new(cfg)?;
 
 `TelegramBotConfig.max_chars` 用于限制最终消息长度（超出会截断并追加 `...`）。
 
-
 ---
 ## docs/sinks/serverchan.md
 
@@ -1154,7 +1170,7 @@ let sink = TelegramBotSink::new(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{ServerChanConfig, ServerChanSink};
 
 let cfg = ServerChanConfig::new("SCTxxxxxxxxxxxxxxxx");
@@ -1182,7 +1198,7 @@ let sink = ServerChanSink::new(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{PushPlusConfig, PushPlusSink};
 
 let cfg = PushPlusConfig::new("your_token");
@@ -1191,7 +1207,7 @@ let sink = PushPlusSink::new(cfg)?;
 
 可选：设置 channel / topic / template：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{PushPlusConfig, PushPlusSink};
 
 let cfg = PushPlusConfig::new("your_token")
@@ -1221,7 +1237,7 @@ let sink = PushPlusSink::new(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{BarkConfig, BarkSink};
 
 let cfg = BarkConfig::new("your_device_key");
@@ -1230,7 +1246,7 @@ let sink = BarkSink::new(cfg)?;
 
 可选：设置 group：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{BarkConfig, BarkSink};
 
 let cfg = BarkConfig::new("your_device_key").with_group("opencode");
@@ -1257,7 +1273,7 @@ let sink = BarkSink::new(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new("https://example.com/webhook");
@@ -1266,7 +1282,7 @@ let sink = GenericWebhookSink::new(cfg)?;
 
 可选：修改字段名、限制 URL path 前缀、限制允许的 host：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new("https://example.com/hooks/notify")
@@ -1280,7 +1296,7 @@ let sink = GenericWebhookSink::new(cfg)?;
 
 如果 webhook URL 可能来自**不可信输入/远程配置**，建议使用严格模式：强制配置 `allowed_hosts` + `path_prefix`，并且不能关闭 DNS 公网 IP 校验：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new_strict(
@@ -1305,7 +1321,7 @@ let sink = GenericWebhookSink::new_strict(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use std::time::Duration;
 
 use notify_kit::{DingTalkWebhookConfig, DingTalkWebhookSink};
@@ -1323,7 +1339,7 @@ let sink = DingTalkWebhookSink::new(cfg)?;
 
 如果群机器人开启了 “加签”，可以用：
 
-```rust
+```rust,no_run,edition2021
 use notify_kit::{DingTalkWebhookConfig, DingTalkWebhookSink};
 
 let cfg = DingTalkWebhookConfig::new("https://oapi.dingtalk.com/robot/send?access_token=xxx")
@@ -1370,7 +1386,7 @@ let sink = DingTalkWebhookSink::new(cfg)?;
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
 use std::time::Duration;
 
 use notify_kit::{WeComWebhookConfig, WeComWebhookSink};
@@ -1421,7 +1437,7 @@ let sink = WeComWebhookSink::new(cfg)?;
 
 ## 一个最小例子：打印到 stderr
 
-```rust
+```rust,no_run,edition2021
 use std::future::Future;
 use std::pin::Pin;
 
@@ -1467,7 +1483,6 @@ impl Sink for StderrSink {
 
 - 在 sink 内部用 `Mutex<Vec<Event>>` 收集收到的事件
 - 测试时调用 `hub.send(event).await`，断言收集到的内容
-
 
 ---
 ## docs/faq.md
@@ -1562,6 +1577,12 @@ cargo test --workspace
 
 ```bash
 ./scripts/docs.sh serve --hostname 0.0.0.0 --port 3000
+```
+
+编译 Rust 代码片段（mdBook `test`）：
+
+```bash
+./scripts/docs.sh test
 ```
 
 首次使用需要安装：

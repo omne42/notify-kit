@@ -4,16 +4,24 @@
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new("https://example.com/webhook");
 let sink = GenericWebhookSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 可选：修改字段名、限制 URL path 前缀、限制允许的 host：
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new("https://example.com/hooks/notify")
@@ -21,13 +29,18 @@ let cfg = GenericWebhookConfig::new("https://example.com/hooks/notify")
     .with_path_prefix("/hooks/")
     .with_allowed_hosts(vec!["example.com".to_string()]);
 let sink = GenericWebhookSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 ## 严格模式（推荐）
 
 如果 webhook URL 可能来自**不可信输入/远程配置**，建议使用严格模式：强制配置 `allowed_hosts` + `path_prefix`，并且不能关闭 DNS 公网 IP 校验：
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new_strict(
@@ -36,6 +49,8 @@ let cfg = GenericWebhookConfig::new_strict(
     vec!["example.com".to_string()],
 );
 let sink = GenericWebhookSink::new_strict(cfg)?;
+# Ok(())
+# }
 ```
 
 ## 安全提示

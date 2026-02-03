@@ -4,7 +4,8 @@
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
+# extern crate notify_kit;
 use std::sync::Arc;
 use notify_kit::{Hub, HubConfig, SoundConfig, SoundSink};
 
@@ -16,7 +17,8 @@ let hub = Hub::new(
 
 如果你需要对 `notify()` 的后台并发做背压（避免事件洪泛导致无界 spawn），可以用：
 
-```rust
+```rust,no_run,edition2021
+# extern crate notify_kit;
 use std::sync::Arc;
 use notify_kit::{Hub, HubConfig, SoundConfig, SoundSink};
 
@@ -40,7 +42,8 @@ let hub = Hub::new_with_inflight_limit(
 
 一个更完整的配置示例：
 
-```rust
+```rust,no_run,edition2021
+# extern crate notify_kit;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -66,7 +69,7 @@ let cfg = HubConfig {
 - **每个 sink 单独超时**：由 `per_sink_timeout` 控制；超时会被视为该 sink 失败。
 - **错误聚合**：当一个或多个 sinks 失败时，会返回一个聚合错误，内容类似：
 
-```
+```text
 one or more sinks failed:
 - feishu: timeout after 2s
 - sound: boom

@@ -41,6 +41,12 @@ cargo test --workspace
 ./scripts/docs.sh serve --hostname 0.0.0.0 --port 3000
 ```
 
+编译 Rust 代码片段（mdBook `test`）：
+
+```bash
+./scripts/docs.sh test
+```
+
 首次使用需要安装：
 
 ```bash

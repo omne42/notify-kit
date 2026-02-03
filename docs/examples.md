@@ -6,7 +6,11 @@
 
 ## 1) CLI：任务完成时响铃（并可在终端里配置 Dock/任务栏闪烁）
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# extern crate tokio;
+# fn main() -> anyhow::Result<()> {
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity, SoundConfig, SoundSink};
@@ -16,14 +20,25 @@ let hub = Hub::new(
     vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))],
 );
 
-hub.notify(Event::new("task_done", Severity::Success, "done"));
+let rt = tokio::runtime::Builder::new_current_thread()
+    .enable_time()
+    .build()
+    .expect("build tokio runtime");
+rt.block_on(hub.send(Event::new("task_done", Severity::Success, "done")))?;
+# Ok(())
+# }
 ```
 
 提示：如果你希望“macOS Dock/Windows 任务栏闪一下”，通常需要在终端设置里开启 Visual Bell / Bounce（见 [SoundSink](sinks/sound.md)）。
 
 ## 2) 服务端：关键错误同时发到多个渠道
 
-```rust
+```rust,no_run,edition2021
+#
+# extern crate anyhow;
+# extern crate notify_kit;
+# extern crate tokio;
+# fn main() -> anyhow::Result<()> {
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity, SoundConfig, SoundSink};
@@ -35,12 +50,26 @@ let sink_feishu = Arc::new(FeishuWebhookSink::new(FeishuWebhookConfig::new(
 ))?);
 
 let hub = Hub::new(HubConfig::default(), vec![sink_sound, sink_feishu]);
-hub.notify(Event::new("fatal", Severity::Error, "service crashed").with_body("trace id: ..."));
+let rt = tokio::runtime::Builder::new_current_thread()
+    .enable_time()
+    .build()
+    .expect("build tokio runtime");
+rt.block_on(hub.send(
+    Event::new("fatal", Severity::Error, "service crashed").with_body("trace id: ..."),
+))?;
+#
+# Ok(())
+# }
 ```
 
 ## 3) CI：失败时发到通用 webhook
 
-```rust
+```rust,no_run,edition2021
+#
+# extern crate anyhow;
+# extern crate notify_kit;
+# extern crate tokio;
+# fn main() -> anyhow::Result<()> {
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity};
@@ -53,12 +82,24 @@ let sink = Arc::new(GenericWebhookSink::new_strict(GenericWebhookConfig::new_str
 ))?);
 
 let hub = Hub::new(HubConfig::default(), vec![sink]);
-hub.notify(Event::new("ci_failed", Severity::Error, "build failed"));
+let rt = tokio::runtime::Builder::new_current_thread()
+    .enable_time()
+    .build()
+    .expect("build tokio runtime");
+rt.block_on(hub.send(Event::new("ci_failed", Severity::Error, "build failed")))?;
+#
+# Ok(())
+# }
 ```
 
 ## 4) Agent：只打开少数事件（kind allow-list）
 
-```rust
+```rust,no_run,edition2021
+#
+# extern crate anyhow;
+# extern crate notify_kit;
+# extern crate tokio;
+# fn main() -> anyhow::Result<()> {
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -76,5 +117,7 @@ let hub = Hub::new(
 
 hub.notify(Event::new("turn_completed", Severity::Success, "done"));
 hub.notify(Event::new("debug_noise", Severity::Info, "ignored"));
+#
+# Ok(())
+# }
 ```
-

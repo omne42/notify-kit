@@ -4,11 +4,16 @@
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{GitHubCommentConfig, GitHubCommentSink};
 
 let cfg = GitHubCommentConfig::new("owner", "repo", 123, "ghp_xxx");
 let sink = GitHubCommentSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 ## Token 权限

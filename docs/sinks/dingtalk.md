@@ -4,7 +4,10 @@
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use std::time::Duration;
 
 use notify_kit::{DingTalkWebhookConfig, DingTalkWebhookSink};
@@ -16,13 +19,18 @@ let cfg = DingTalkWebhookConfig::new("https://oapi.dingtalk.com/robot/send?acces
     .with_public_ip_check(false);
 
 let sink = DingTalkWebhookSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 ## 签名（可选）
 
 如果群机器人开启了 “加签”，可以用：
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{DingTalkWebhookConfig, DingTalkWebhookSink};
 
 let cfg = DingTalkWebhookConfig::new("https://oapi.dingtalk.com/robot/send?access_token=xxx")
@@ -31,6 +39,8 @@ let cfg = DingTalkWebhookConfig::new("https://oapi.dingtalk.com/robot/send?acces
     .with_public_ip_check(false);
 
 let sink = DingTalkWebhookSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 每次发送会自动为 URL 追加 `timestamp` / `sign` 参数，并且不会在 `Debug`/错误信息中泄露 secret 或完整 webhook URL。

@@ -46,6 +46,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Dev: 在提交门禁中增加 bot 示例的 Node.js 语法校验（不要求安装依赖）。
 - Docs: 重构 `docs/SUMMARY.md` 的信息架构（Overview / Getting Started / Guides / Reference / Sinks）。
 - Docs: `./scripts/docs.sh` 允许透传 mdBook 参数（便于容器/远程预览）。
+- Docs: `llms.txt` 生成时会剔除 mdBook 的隐藏行（`# ...`），减少噪音。
 
 ### Fixed
 - `SoundSink`：外部命令会被回收（避免僵尸进程累积）。
@@ -59,6 +60,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-wecom`：回调解密后校验 receiver（corp id），并加强 PKCS7 padding 校验。
 - `bots/opencode-dingtalk-stream`：校验 `sessionWebhook` 为 https 且 host 属于钉钉域名（降低 SSRF 风险）。
 - `bots/opencode-wecom`：增加 timestamp 时间窗与 nonce 去重（降低重放风险）。
+- Docs: 修正 mdBook 配置字段，确保 `./scripts/docs.sh test` 可用（编译 Rust 代码片段）。
 
 ## [0.1.0] - 2026-01-31
 

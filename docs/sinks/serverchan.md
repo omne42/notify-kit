@@ -9,11 +9,16 @@
 
 ## 构造
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use notify_kit::{ServerChanConfig, ServerChanSink};
 
 let cfg = ServerChanConfig::new("SCTxxxxxxxxxxxxxxxx");
 let sink = ServerChanSink::new(cfg)?;
+# Ok(())
+# }
 ```
 
 ## 超时

@@ -2,9 +2,13 @@
 
 `Sink` 是你扩展通知渠道的核心抽象：
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
 use std::future::Future;
 use std::pin::Pin;
+
+use notify_kit::Event;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -21,7 +25,9 @@ pub trait Sink: Send + Sync {
 
 ## 实现模板
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
 use std::future::Future;
 use std::pin::Pin;
 

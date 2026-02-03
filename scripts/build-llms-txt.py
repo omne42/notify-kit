@@ -25,11 +25,49 @@ def append_file(out: list[str], label: str, path: Path) -> None:
     if not path.is_file():
         print(f"build-llms-txt: warning: missing {label}", file=sys.stderr)
         return
+
+    content = path.read_text(encoding="utf-8")
+    if path.suffix == ".md":
+        content = strip_mdbook_hidden_lines(content)
+
     out.append("\n---\n")
     out.append(f"## {label}\n\n")
-    out.append(path.read_text(encoding="utf-8"))
-    if not out[-1].endswith("\n"):
+    out.append(content)
+    if not content.endswith("\n"):
         out.append("\n")
+
+
+def strip_mdbook_hidden_lines(markdown: str) -> str:
+    """
+    Strip mdBook/Rustdoc hidden lines inside Rust code blocks.
+
+    In mdBook, Rust code blocks can hide lines starting with `#` (but not `#[...]`),
+    which are still part of the source file. For LLM bundles, these lines add noise.
+    """
+
+    out: list[str] = []
+    in_rust_block = False
+
+    for raw_line in markdown.splitlines(keepends=True):
+        line = raw_line.rstrip("\n")
+
+        if line.startswith("```"):
+            tag = line.strip()
+            if in_rust_block:
+                in_rust_block = False
+            else:
+                in_rust_block = tag.startswith("```rust")
+            out.append(raw_line)
+            continue
+
+        if in_rust_block:
+            stripped = line.lstrip()
+            if stripped.startswith("#") and not stripped.startswith("#["):
+                continue
+
+        out.append(raw_line)
+
+    return "".join(out)
 
 
 def main() -> int:
@@ -64,4 +102,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

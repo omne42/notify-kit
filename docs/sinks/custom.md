@@ -7,7 +7,9 @@
 
 ## 一个最小例子：打印到 stderr
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -53,4 +55,3 @@ impl Sink for StderrSink {
 
 - 在 sink 内部用 `Mutex<Vec<Event>>` 收集收到的事件
 - 测试时调用 `hub.send(event).await`，断言收集到的内容
-

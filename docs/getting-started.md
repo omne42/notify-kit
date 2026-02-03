@@ -24,7 +24,11 @@ notify-kit = { path = "../notify-kit/crates/notify-kit" }
 
 `Hub::notify` 需要在 **Tokio runtime** 中调用（否则会丢弃并 `tracing::warn!`）。
 
-```rust
+```rust,no_run,edition2021
+# extern crate anyhow;
+# extern crate notify_kit;
+# extern crate tokio;
+# extern crate tracing;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -33,14 +37,7 @@ use notify_kit::{
     Event, Hub, HubConfig, Severity, Sink, SoundConfig, SoundSink, TryNotifyError,
 };
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> anyhow::Result<()> {
-    // 你的应用应该初始化 tracing subscriber，这样才能看到 `notify-kit` 的 warn 日志。
-    // 这里仅作为示例：你也可以使用自己项目里的 tracing 配置。
-    //
-    // tracing_subscriber = "0.3"
-    tracing_subscriber::fmt::init();
-
+fn main() -> anyhow::Result<()> {
     // 组合多个 sinks（示例只启用 sound）
     let sinks: Vec<Arc<dyn Sink>> = vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))];
 
@@ -56,22 +53,32 @@ async fn main() -> anyhow::Result<()> {
         sinks,
     );
 
-    // fire-and-forget（不关心结果）
-    hub.notify(Event::new("turn_completed", Severity::Success, "done"));
+    // `notify-kit` 需要在 Tokio runtime 中运行；这里用一个最小 runtime 来演示。
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .expect("build tokio runtime");
 
-    // 可观测结果（等待所有 sinks）
-    hub.send(Event::new("turn_completed", Severity::Success, "done (awaited)"))
-        .await?;
+    rt.block_on(async {
+        // fire-and-forget（不关心结果）
+        hub.notify(Event::new("turn_completed", Severity::Success, "done"));
 
-    // 如果你处在“不确定是否有 Tokio runtime”的代码路径中：
-    match hub.try_notify(Event::new("turn_completed", Severity::Success, "done (try_notify)")) {
-        Ok(()) => {}
-        Err(TryNotifyError::NoTokioRuntime) => {
-            // 这里不要 panic：notify 只是附加能力。
-            // 你可以选择：记录日志、降级为 stdout、暂存到队列里、或忽略。
-            tracing::debug!("no tokio runtime; notification skipped");
+        // 可观测结果（等待所有 sinks）
+        hub.send(Event::new("turn_completed", Severity::Success, "done (awaited)"))
+            .await?;
+
+        // 如果你处在“不确定是否有 Tokio runtime”的代码路径中：
+        match hub.try_notify(Event::new("turn_completed", Severity::Success, "done (try_notify)")) {
+            Ok(()) => {}
+            Err(TryNotifyError::NoTokioRuntime) => {
+                // 这里不要 panic：notify 只是附加能力。
+                // 你可以选择：记录日志、降级为 stdout、暂存到队列里、或忽略。
+                tracing::debug!("no tokio runtime; notification skipped");
+            }
         }
-    }
+
+        Ok::<_, anyhow::Error>(())
+    })?;
 
     Ok(())
 }
@@ -87,7 +94,11 @@ async fn main() -> anyhow::Result<()> {
 
 ### 同时启用多个 sinks
 
-```rust
+```rust,no_run,edition2021
+#
+# extern crate anyhow;
+# extern crate notify_kit;
+# fn main() -> anyhow::Result<()> {
 use std::sync::Arc;
 
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink, Sink, SoundConfig, SoundSink};
@@ -99,11 +110,15 @@ sinks.push(Arc::new(SoundSink::new(SoundConfig { command_argv: None })));
 sinks.push(Arc::new(FeishuWebhookSink::new(FeishuWebhookConfig::new(
     "https://open.feishu.cn/open-apis/bot/v2/hook/xxx",
 ))?));
+#
+# Ok(())
+# }
 ```
 
 ### 事件过滤（只发你关心的 kind）
 
-```rust
+```rust,no_run,edition2021
+# extern crate notify_kit;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -115,4 +130,3 @@ let cfg = HubConfig {
     per_sink_timeout: Duration::from_secs(2),
 };
 ```
-
