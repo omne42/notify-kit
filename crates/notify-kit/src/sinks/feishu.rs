@@ -129,7 +129,7 @@ impl FeishuWebhookSink {
         )?;
         validate_url_path_prefix(&webhook_url, "/open-apis/bot/v2/hook/")?;
         if validate_public_ip_at_construction {
-            validate_url_resolves_to_public_ip(&webhook_url)?;
+            validate_url_resolves_to_public_ip(&webhook_url, config.timeout)?;
         }
         let client = build_http_client(config.timeout)?;
         Ok(Self {

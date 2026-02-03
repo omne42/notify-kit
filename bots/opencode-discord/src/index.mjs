@@ -57,7 +57,7 @@ const client = new Client({
 })
 
 async function postChannelMessage(channelId, text) {
-  const channel = await client.channels.fetch(channelId).catch(() => null)
+  const channel = await ignoreError(client.channels.fetch(channelId), "discord fetch channel failed")
   if (!channel || !channel.isTextBased()) return
   await ignoreError(channel.send(truncateForDiscord(text)), "discord channel send failed")
 }

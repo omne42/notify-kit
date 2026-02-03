@@ -140,8 +140,11 @@ pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> anyh
     Err(anyhow::anyhow!("url path is not allowed"))
 }
 
-pub(crate) fn validate_url_resolves_to_public_ip(url: &reqwest::Url) -> anyhow::Result<()> {
-    resolve_url_to_public_addrs(url)?;
+pub(crate) fn validate_url_resolves_to_public_ip(
+    url: &reqwest::Url,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    resolve_url_to_public_addrs_with_timeout(url, timeout)?;
     Ok(())
 }
 
@@ -150,6 +153,40 @@ fn resolve_url_to_public_addrs(url: &reqwest::Url) -> anyhow::Result<Vec<SocketA
         return Err(anyhow::anyhow!("url must have a host"));
     };
 
+    resolve_host_to_public_addrs(host)
+}
+
+fn resolve_url_to_public_addrs_with_timeout(
+    url: &reqwest::Url,
+    timeout: Duration,
+) -> anyhow::Result<Vec<SocketAddr>> {
+    let Some(host) = url.host_str() else {
+        return Err(anyhow::anyhow!("url must have a host"));
+    };
+
+    let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
+    if dns_timeout == Duration::ZERO {
+        return Err(anyhow::anyhow!("dns lookup timeout"));
+    }
+
+    let host = host.to_string();
+    let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<Vec<SocketAddr>>>();
+    std::thread::spawn(move || {
+        let _ = tx.send(resolve_host_to_public_addrs(&host));
+    });
+
+    match rx.recv_timeout(dns_timeout) {
+        Ok(res) => res,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(anyhow::anyhow!("dns lookup timeout"))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(anyhow::anyhow!("dns lookup failed"))
+        }
+    }
+}
+
+fn resolve_host_to_public_addrs(host: &str) -> anyhow::Result<Vec<SocketAddr>> {
     let addrs = (host, 443)
         .to_socket_addrs()
         .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;

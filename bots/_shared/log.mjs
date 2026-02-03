@@ -8,6 +8,12 @@ export function isVerbose() {
 
 export function logError(context, err) {
   if (!isVerbose()) return
+  const stack = err?.stack
+  if (typeof stack === "string" && stack.trim() !== "") {
+    console.error(context, stack)
+    return
+  }
+
   const msg = err?.message || String(err)
   console.error(context, msg)
 }
@@ -17,4 +23,3 @@ export function ignoreError(promise, context) {
     logError(context, err)
   })
 }
-

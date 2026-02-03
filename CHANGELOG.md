@@ -76,6 +76,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `SlackWebhookSink` / `DiscordWebhookSink` / `GenericWebhookSink` / `BarkSink`：读取响应 body 失败时仍保留 HTTP status 错误上下文。
 - `BarkSink`：当响应看起来像 JSON 时，即使 Content-Type 缺失/错误也会尝试解析。
 - `bots/opencode-telegram`：支持 `OPENCODE_SESSION_STORE_PATH` 以持久化 chat → session 映射（可选）。
+- `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加超时（避免 DNS 卡死导致初始化阻塞）。
+- `bots/_shared/log`：verbose 模式输出错误 stack（更易排障）。
 - Docs: 修复 `./scripts/docs.sh test` 偶发的重复 rmeta 导致的 snippet 编译失败。
 
 ## [0.1.0] - 2026-01-31
