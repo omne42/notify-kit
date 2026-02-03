@@ -2,10 +2,9 @@ import http from "http"
 import * as lark from "@larksuiteoapi/node-sdk"
 import { createOpencode } from "@opencode-ai/sdk"
 
-import { createLimiter } from "../../_shared/limiter.mjs"
+import { createBotLimiter, createBotSessionStore } from "../../_shared/bootstrap.mjs"
 import { ignoreError } from "../../_shared/log.mjs"
 import { assertEnv, buildResponseText, getCompletedToolUpdate } from "../../_shared/opencode.mjs"
-import { createSessionStore } from "../../_shared/session_store.mjs"
 
 assertEnv("FEISHU_APP_ID")
 assertEnv("FEISHU_APP_SECRET")
@@ -18,15 +17,8 @@ console.log("🚀 Starting opencode server...")
 const opencode = await createOpencode({ port: 0 })
 console.log("✅ Opencode server ready")
 
-const limiter = createLimiter({ maxInflight: process.env.OPENCODE_BOT_MAX_INFLIGHT || "4" })
-const store = createSessionStore(process.env.OPENCODE_SESSION_STORE_PATH, {
-  rootDir: process.env.OPENCODE_SESSION_STORE_ROOT || process.cwd(),
-})
-await store.load()
-store.installExitHooks()
-if (store.enabled) {
-  console.log(`🗄️ Session store enabled: ${store.path}`)
-}
+const limiter = createBotLimiter()
+const store = await createBotSessionStore()
 
 const client = new lark.Client({
   appId: process.env.FEISHU_APP_ID,

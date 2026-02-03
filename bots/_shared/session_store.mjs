@@ -15,8 +15,12 @@ async function safeReadJson(filePath) {
   }
 }
 
-async function atomicWriteUtf8(filePath, content) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true })
+async function atomicWriteUtf8(filePath, content, { root = null, rootReal = null } = {}) {
+  const dir = path.dirname(filePath)
+  await fs.mkdir(dir, { recursive: true })
+  if (root && rootReal) {
+    assertDirRealWithinRoot(root, rootReal, dir)
+  }
 
   const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`
   await fs.writeFile(tmp, content, "utf-8")
@@ -44,6 +48,53 @@ function safeRealpathSync(p) {
   }
 }
 
+function isPathWithinRoot(rootReal, targetReal) {
+  if (!rootReal || !targetReal) return false
+  if (rootReal === targetReal) return true
+  const rel = path.relative(rootReal, targetReal)
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)
+}
+
+function assertNoSymlinkEscape(rootAbs, rootReal, targetAbs) {
+  const rel = path.relative(rootAbs, targetAbs)
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(`session store path must be within rootDir: ${rootAbs}`)
+  }
+
+  let cur = rootAbs
+  for (const seg of rel.split(path.sep)) {
+    if (!seg || seg === ".") continue
+    cur = path.join(cur, seg)
+    if (!fsSync.existsSync(cur)) continue
+
+    let st
+    try {
+      st = fsSync.lstatSync(cur)
+    } catch {
+      continue
+    }
+    if (!st.isSymbolicLink()) continue
+
+    const curReal = safeRealpathSync(cur)
+    if (!curReal) {
+      throw new Error(`session store path contains unresolved symlink: ${cur}`)
+    }
+    if (!isPathWithinRoot(rootReal, curReal)) {
+      throw new Error(`session store path must be within rootDir: ${rootAbs}`)
+    }
+  }
+}
+
+function assertDirRealWithinRoot(rootAbs, rootReal, dirAbs) {
+  const dirReal = safeRealpathSync(dirAbs)
+  if (!dirReal) {
+    throw new Error(`session store realpath failed: ${dirAbs}`)
+  }
+  if (!isPathWithinRoot(rootReal, dirReal)) {
+    throw new Error(`session store path must be within rootDir: ${rootAbs}`)
+  }
+}
+
 function resolveStorePath(filePath, rootDir) {
   const raw = String(filePath || "").trim()
   if (!raw) return null
@@ -55,19 +106,17 @@ function resolveStorePath(filePath, rootDir) {
 
   const rootReal = safeRealpathSync(root) || root
   const storeDir = path.dirname(resolved)
-  const storeDirReal = safeRealpathSync(storeDir) || storeDir
 
-  const rel = path.relative(rootReal, storeDirReal)
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error(`session store path must be within rootDir: ${root}`)
-  }
+  assertNoSymlinkEscape(root, rootReal, storeDir)
 
   return resolved
 }
 
 export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = null } = {}) {
   const map = new Map()
-  const storePath = resolveStorePath(filePath, rootDir)
+  const root = rootDir && String(rootDir).trim() !== "" ? path.resolve(String(rootDir)) : null
+  const rootReal = root ? safeRealpathSync(root) || root : null
+  const storePath = resolveStorePath(filePath, root)
 
   let flushTimer = null
   let pending = Promise.resolve()
@@ -84,7 +133,10 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
   async function flushNow() {
     if (!storePath) return
     const obj = Object.fromEntries(map.entries())
-    await atomicWriteUtf8(storePath, `${JSON.stringify(obj, null, 2)}\n`)
+    await atomicWriteUtf8(storePath, `${JSON.stringify(obj, null, 2)}\n`, {
+      root,
+      rootReal,
+    })
   }
 
   function scheduleFlush() {

@@ -23,6 +23,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/_shared/session_store`：支持设置根目录（`rootDir`；bots 可用 `OPENCODE_SESSION_STORE_ROOT`）以限制 session store 文件路径。
 - `bots/_shared/opencode`：抽取 bots 共享逻辑（`assertEnv`/response 文本拼装/tool update 解析）。
 - `bots/_shared/log`：提供 `ignoreError`（best-effort 忽略错误）与 `OPENCODE_BOT_VERBOSE` 可选日志输出。
+- `bots/_shared/bootstrap`：抽取 bots 通用初始化（limiter + session store）。
 - CI: GitHub Actions workflow（`./.github/workflows/ci.yml`）。
 - Docs: 刷新 `docs/README.md`/`docs/concepts.md` 的内置 sinks 列表；`.gitignore` 忽略 `node_modules/`。
 - Docs: 新增 mdBook 本地预览（含搜索）（`docs/book.toml` + `./scripts/docs.sh`）。
@@ -76,7 +77,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `SlackWebhookSink` / `DiscordWebhookSink` / `GenericWebhookSink` / `BarkSink`：读取响应 body 失败时仍保留 HTTP status 错误上下文。
 - `BarkSink`：当响应看起来像 JSON 时，即使 Content-Type 缺失/错误也会尝试解析。
 - `bots/opencode-telegram`：支持 `OPENCODE_SESSION_STORE_PATH` 以持久化 chat → session 映射（可选）。
-- `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加超时（避免 DNS 卡死导致初始化阻塞）。
+- `bots/_shared/session_store`：`rootDir` 校验加强（防 symlink 逃逸；flush 前二次校验 realpath）。
+- `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加超时 + 并发限制（避免 DNS 卡死导致初始化阻塞/线程堆积）。
 - `bots/_shared/log`：verbose 模式输出错误 stack（更易排障）。
 - Docs: 修复 `./scripts/docs.sh test` 偶发的重复 rmeta 导致的 snippet 编译失败。
 

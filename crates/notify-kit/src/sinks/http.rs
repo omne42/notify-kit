@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::sync::{RwLock, Semaphore, oneshot};
@@ -26,6 +26,7 @@ struct CachedPinnedClient {
 static PINNED_CLIENT_CACHE: OnceLock<RwLock<HashMap<PinnedClientKey, CachedPinnedClient>>> =
     OnceLock::new();
 static DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+static SYNC_DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<SyncSemaphore>> = OnceLock::new();
 
 fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinnedClient>> {
     PINNED_CLIENT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
@@ -33,6 +34,73 @@ fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinne
 
 fn dns_lookup_semaphore() -> &'static Arc<Semaphore> {
     DNS_LOOKUP_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT)))
+}
+
+struct SyncSemaphore {
+    max: usize,
+    available: Mutex<usize>,
+    cv: Condvar,
+}
+
+struct SyncPermit {
+    sem: Arc<SyncSemaphore>,
+}
+
+impl Drop for SyncPermit {
+    fn drop(&mut self) {
+        self.sem.release();
+    }
+}
+
+impl SyncSemaphore {
+    fn new(max: usize) -> Self {
+        Self {
+            max,
+            available: Mutex::new(max),
+            cv: Condvar::new(),
+        }
+    }
+
+    fn release(&self) {
+        let mut available = self.available.lock().unwrap_or_else(|e| e.into_inner());
+        *available = (*available + 1).min(self.max);
+        self.cv.notify_one();
+    }
+
+    fn acquire_timeout(self: &Arc<Self>, timeout: Duration) -> Option<SyncPermit> {
+        if timeout == Duration::ZERO {
+            return None;
+        }
+        let deadline = Instant::now() + timeout;
+
+        let mut available = self.available.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if *available > 0 {
+                *available -= 1;
+                return Some(SyncPermit { sem: self.clone() });
+            }
+
+            let now = Instant::now();
+            if now >= deadline {
+                return None;
+            }
+
+            let remaining = deadline.duration_since(now);
+            let (guard, wait) = self
+                .cv
+                .wait_timeout(available, remaining)
+                .unwrap_or_else(|e| e.into_inner());
+            available = guard;
+            if wait.timed_out() {
+                return None;
+            }
+        }
+    }
+}
+
+fn sync_dns_lookup_semaphore() -> &'static Arc<SyncSemaphore> {
+    SYNC_DNS_LOOKUP_SEMAPHORE
+        .get_or_init(|| Arc::new(SyncSemaphore::new(DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT)))
 }
 
 fn build_http_client_builder(timeout: Duration) -> reqwest::ClientBuilder {
@@ -169,13 +237,25 @@ fn resolve_url_to_public_addrs_with_timeout(
         return Err(anyhow::anyhow!("dns lookup timeout"));
     }
 
+    let deadline = Instant::now() + dns_timeout;
+    let permit = sync_dns_lookup_semaphore()
+        .clone()
+        .acquire_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok_or_else(|| anyhow::anyhow!("dns lookup timeout"))?;
+
     let host = host.to_string();
     let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<Vec<SocketAddr>>>();
     std::thread::spawn(move || {
+        let _permit = permit;
         let _ = tx.send(resolve_host_to_public_addrs(&host));
     });
 
-    match rx.recv_timeout(dns_timeout) {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining == Duration::ZERO {
+        return Err(anyhow::anyhow!("dns lookup timeout"));
+    }
+
+    match rx.recv_timeout(remaining) {
         Ok(res) => res,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             Err(anyhow::anyhow!("dns lookup timeout"))
