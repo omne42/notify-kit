@@ -49,3 +49,4 @@ npm start
 ## 说明
 
 - 默认在内存中维护映射；如设置 `OPENCODE_SESSION_STORE_PATH`（例如 `.opencode/sessions.json`），会把映射持久化到文件，重启后可恢复（可选：用 `OPENCODE_SESSION_STORE_ROOT` 限制 store 路径根目录）。
+- 为降低重放风险，回调会做 timestamp 时间窗校验 + nonce 去重；当前去重缓存是内存级的（重启会清空）。

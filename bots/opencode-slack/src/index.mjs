@@ -2,6 +2,8 @@ import { App } from "@slack/bolt"
 import { createOpencode } from "@opencode-ai/sdk"
 
 import { createLimiter } from "../../_shared/limiter.mjs"
+import { ignoreError } from "../../_shared/log.mjs"
+import { assertEnv, buildResponseText, getCompletedToolUpdate } from "../../_shared/opencode.mjs"
 import { createSessionStore } from "../../_shared/session_store.mjs"
 
 const app = new App({
@@ -10,12 +12,6 @@ const app = new App({
   socketMode: true,
   appToken: process.env.SLACK_APP_TOKEN,
 })
-
-function assertEnv(name) {
-  if (!process.env[name] || String(process.env[name]).trim() === "") {
-    throw new Error(`missing required env: ${name}`)
-  }
-}
 
 assertEnv("SLACK_BOT_TOKEN")
 assertEnv("SLACK_SIGNING_SECRET")
@@ -42,24 +38,25 @@ if (store.enabled) {
 const sessions = store.map
 
 async function postThreadMessage(channel, threadTs, text) {
-  await app.client.chat
-    .postMessage({
+  await ignoreError(
+    app.client.chat.postMessage({
       channel,
       thread_ts: threadTs,
       text,
-    })
-    .catch(() => {})
+    }),
+    "slack postMessage failed",
+  )
 }
 
 async function handleToolUpdate(part) {
-  if (!part || part.type !== "tool") return
-  if (!part.state || part.state.status !== "completed") return
+  const update = getCompletedToolUpdate(part)
+  if (!update) return
 
-  const sessionId = part.sessionID
+  const sessionId = update.sessionId
   for (const session of sessions.values()) {
     if (session.sessionId !== sessionId) continue
-    const title = part.state.title || "completed"
-    const tool = part.tool || "tool"
+    const title = update.title
+    const tool = update.tool
     await postThreadMessage(session.channel, session.threadTs, `*${tool}* - ${title}`)
     break
   }
@@ -122,13 +119,7 @@ app.message(async ({ message, say }) => {
     }
 
     const response = result.data
-    const responseText =
-      response?.info?.content ||
-      response?.parts
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("\n") ||
-      "I received your message but didn't have a response."
+    const responseText = buildResponseText(response)
 
     await say({ text: responseText, thread_ts: threadTs })
   })

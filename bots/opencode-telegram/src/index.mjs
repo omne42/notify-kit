@@ -2,13 +2,10 @@ import process from "node:process"
 
 import { createOpencode } from "@opencode-ai/sdk"
 
-function assertEnv(name) {
-  const value = process.env[name]
-  if (value === undefined || String(value).trim() === "") {
-    throw new Error(`missing required env: ${name}`)
-  }
-  return value
-}
+import { createLimiter } from "../../_shared/limiter.mjs"
+import { ignoreError } from "../../_shared/log.mjs"
+import { assertEnv, buildResponseText, getCompletedToolUpdate } from "../../_shared/opencode.mjs"
+import { createSessionStore } from "../../_shared/session_store.mjs"
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -40,25 +37,43 @@ async function tg(method, payload) {
 }
 
 async function sendMessage(chatId, text) {
-  await tg("sendMessage", { chat_id: chatId, text: truncateForTelegram(text) }).catch(() => {})
+  await ignoreError(
+    tg("sendMessage", { chat_id: chatId, text: truncateForTelegram(text) }),
+    "telegram sendMessage failed",
+  )
 }
 
 console.log("🚀 Starting opencode server...")
 const opencode = await createOpencode({ port: 0 })
 console.log("✅ Opencode server ready")
 
+const limiter = createLimiter({ maxInflight: process.env.OPENCODE_BOT_MAX_INFLIGHT || "4" })
+const store = createSessionStore(process.env.OPENCODE_SESSION_STORE_PATH, {
+  rootDir: process.env.OPENCODE_SESSION_STORE_ROOT || process.cwd(),
+})
+await store.load()
+store.installExitHooks()
+if (store.enabled) {
+  console.log(`🗄️ Session store enabled: ${store.path}`)
+}
+
 /**
  * chatId -> sessionId
  */
-const chatToSession = new Map()
+const chatToSession = store.map
 /**
  * sessionId -> chatId
  */
 const sessionToChat = new Map()
+for (const [chatId, sessionId] of chatToSession.entries()) {
+  if (!chatId) continue
+  if (typeof sessionId !== "string" || !sessionId) continue
+  sessionToChat.set(sessionId, chatId)
+}
 
 async function ensureSession(chatId) {
   const existing = chatToSession.get(chatId)
-  if (existing) return { chatId, sessionId: existing }
+  if (typeof existing === "string" && existing) return { chatId, sessionId: existing }
 
   const created = await opencode.client.session.create({
     body: { title: `Telegram chat ${chatId}` },
@@ -68,7 +83,7 @@ async function ensureSession(chatId) {
   }
 
   const sessionId = created.data.id
-  chatToSession.set(chatId, sessionId)
+  store.set(chatId, sessionId)
   sessionToChat.set(sessionId, chatId)
 
   const share = await opencode.client.session.share({ path: { id: sessionId } })
@@ -89,47 +104,38 @@ async function handleUserText(chatId, text) {
     return
   }
 
-  let session
-  try {
-    session = await ensureSession(chatId)
-  } catch {
-    await sendMessage(chatId, "Sorry, I had trouble creating a session.")
-    return
-  }
+  await limiter.run(async () => {
+    let session
+    try {
+      session = await ensureSession(chatId)
+    } catch {
+      await sendMessage(chatId, "Sorry, I had trouble creating a session.")
+      return
+    }
 
-  const result = await opencode.client.session.prompt({
-    path: { id: session.sessionId },
-    body: { parts: [{ type: "text", text: trimmed }] },
+    const result = await opencode.client.session.prompt({
+      path: { id: session.sessionId },
+      body: { parts: [{ type: "text", text: trimmed }] },
+    })
+
+    if (result.error) {
+      await sendMessage(chatId, "Sorry, I had trouble processing your message.")
+      return
+    }
+
+    const responseText = buildResponseText(result.data)
+    await sendMessage(chatId, responseText)
   })
-
-  if (result.error) {
-    await sendMessage(chatId, "Sorry, I had trouble processing your message.")
-    return
-  }
-
-  const response = result.data
-  const responseText =
-    response?.info?.content ||
-    response?.parts
-      ?.filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n") ||
-    "I received your message but didn't have a response."
-
-  await sendMessage(chatId, responseText)
 }
 
 async function handleToolUpdate(part) {
-  if (!part || part.type !== "tool") return
-  if (!part.state || part.state.status !== "completed") return
+  const update = getCompletedToolUpdate(part)
+  if (!update) return
 
-  const sessionId = part.sessionID
-  const chatId = sessionToChat.get(sessionId)
+  const chatId = sessionToChat.get(update.sessionId)
   if (!chatId) return
 
-  const title = part.state.title || "completed"
-  const tool = part.tool || "tool"
-  await sendMessage(chatId, `${tool} - ${title}`)
+  await sendMessage(chatId, `${update.tool} - ${update.title}`)
 }
 
 ;(async () => {
@@ -171,4 +177,3 @@ for (;;) {
     await sleep(1000)
   }
 }
-

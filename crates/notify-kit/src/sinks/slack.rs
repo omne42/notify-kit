@@ -119,7 +119,19 @@ impl Sink for SlackWebhookSink {
             )
             .await?;
             let status = resp.status();
-            let body = read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
+            let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await {
+                Ok(body) => body,
+                Err(err) => {
+                    if status.is_success() {
+                        return Err(anyhow::anyhow!(
+                            "slack webhook api error: {status} (failed to read response body: {err})"
+                        ));
+                    }
+                    return Err(anyhow::anyhow!(
+                        "slack webhook http error: {status} (failed to read response body: {err})"
+                    ));
+                }
+            };
             let body = body.trim();
 
             if !status.is_success() {

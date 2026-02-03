@@ -3,14 +3,9 @@ import * as lark from "@larksuiteoapi/node-sdk"
 import { createOpencode } from "@opencode-ai/sdk"
 
 import { createLimiter } from "../../_shared/limiter.mjs"
+import { ignoreError } from "../../_shared/log.mjs"
+import { assertEnv, buildResponseText, getCompletedToolUpdate } from "../../_shared/opencode.mjs"
 import { createSessionStore } from "../../_shared/session_store.mjs"
-
-function assertEnv(name, { optional = false } = {}) {
-  const value = process.env[name]
-  if ((value === undefined || String(value).trim() === "") && !optional) {
-    throw new Error(`missing required env: ${name}`)
-  }
-}
 
 assertEnv("FEISHU_APP_ID")
 assertEnv("FEISHU_APP_SECRET")
@@ -47,20 +42,18 @@ const sessions = store.map
 async function sendTextToChat(tenantKey, chatId, text) {
   if (!chatId || !text) return
   const req = {
-      params: { receive_id_type: "chat_id" },
-      data: {
-        receive_id: chatId,
-        msg_type: "text",
-        content: JSON.stringify({ text }),
-      },
-    }
+    params: { receive_id_type: "chat_id" },
+    data: {
+      receive_id: chatId,
+      msg_type: "text",
+      content: JSON.stringify({ text }),
+    },
+  }
 
   const tenantOpt =
     tenantKey && String(tenantKey).trim() !== "" ? lark.withTenantKey(tenantKey) : undefined
 
-  await client.im.message
-    .create(req, tenantOpt)
-    .catch(() => {})
+  await ignoreError(client.im.message.create(req, tenantOpt), "feishu send message failed")
 }
 
 async function ensureSession(tenantKey, chatId) {
@@ -117,28 +110,24 @@ async function handleUserText(tenantKey, chatId, text) {
     }
 
     const response = result.data
-    const responseText =
-      response?.info?.content ||
-      response?.parts
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("\n") ||
-      "I received your message but didn't have a response."
+    const responseText = buildResponseText(response)
 
     await sendTextToChat(tenantKey, chatId, responseText)
   })
 }
 
 async function handleToolUpdate(part) {
-  if (!part || part.type !== "tool") return
-  if (!part.state || part.state.status !== "completed") return
+  const update = getCompletedToolUpdate(part)
+  if (!update) return
 
-  const sessionId = part.sessionID
+  const sessionId = update.sessionId
   for (const session of sessions.values()) {
     if (session.sessionId !== sessionId) continue
-    const title = part.state.title || "completed"
-    const tool = part.tool || "tool"
-    await sendTextToChat(session.tenantKey, session.chatId, `${tool} - ${title}`)
+    await sendTextToChat(
+      session.tenantKey,
+      session.chatId,
+      `${update.tool} - ${update.title}`,
+    )
     break
   }
 }

@@ -1,7 +1,39 @@
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
-use std::time::Duration;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
+
+use tokio::sync::{RwLock, Semaphore, oneshot};
 
 pub(crate) const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024;
+
+const DEFAULT_DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
+const DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT: usize = 32;
+const DEFAULT_PINNED_CLIENT_TTL: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PinnedClientKey {
+    host: String,
+    timeout_ms: u64,
+}
+
+#[derive(Clone)]
+struct CachedPinnedClient {
+    client: reqwest::Client,
+    expires_at: Instant,
+}
+
+static PINNED_CLIENT_CACHE: OnceLock<RwLock<HashMap<PinnedClientKey, CachedPinnedClient>>> =
+    OnceLock::new();
+static DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+
+fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinnedClient>> {
+    PINNED_CLIENT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+fn dns_lookup_semaphore() -> &'static Arc<Semaphore> {
+    DNS_LOOKUP_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT)))
+}
 
 fn build_http_client_builder(timeout: Duration) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
@@ -145,16 +177,32 @@ pub(crate) async fn build_http_client_pinned_async(
     timeout: Duration,
     url: reqwest::Url,
 ) -> anyhow::Result<reqwest::Client> {
-    let (host, addrs) = tokio::task::spawn_blocking(move || {
-        let host = url
-            .host_str()
-            .ok_or_else(|| anyhow::anyhow!("url must have a host"))?
-            .to_string();
-        let addrs = resolve_url_to_public_addrs(&url)?;
-        Ok::<_, anyhow::Error>((host, addrs))
-    })
-    .await
-    .map_err(|_| anyhow::anyhow!("dns lookup failed"))??;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("url must have a host"))?
+        .to_string();
+
+    let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
+    let permit = tokio::time::timeout(dns_timeout, dns_lookup_semaphore().clone().acquire_owned())
+        .await
+        .map_err(|_| anyhow::anyhow!("dns lookup timeout"))?
+        .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
+
+    let (tx, rx) = oneshot::channel::<anyhow::Result<Vec<SocketAddr>>>();
+    tokio::task::spawn(async move {
+        let _permit = permit;
+        let joined = tokio::task::spawn_blocking(move || resolve_url_to_public_addrs(&url)).await;
+        let res = match joined {
+            Ok(res) => res,
+            Err(_) => Err(anyhow::anyhow!("dns lookup failed")),
+        };
+        let _ = tx.send(res);
+    });
+
+    let addrs = tokio::time::timeout(dns_timeout, rx)
+        .await
+        .map_err(|_| anyhow::anyhow!("dns lookup timeout"))?
+        .map_err(|_| anyhow::anyhow!("dns lookup failed"))??;
 
     build_http_client_builder(timeout)
         .resolve_to_addrs(&host, &addrs)
@@ -168,11 +216,44 @@ pub(crate) async fn select_http_client(
     url: &reqwest::Url,
     enforce_public_ip: bool,
 ) -> anyhow::Result<reqwest::Client> {
-    if enforce_public_ip {
-        build_http_client_pinned_async(timeout, url.clone()).await
-    } else {
-        Ok(base_client.clone())
+    if !enforce_public_ip {
+        return Ok(base_client.clone());
     }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("url must have a host"))?;
+    let timeout_ms = timeout.as_millis().min(u64::MAX as u128) as u64;
+    let key = PinnedClientKey {
+        host: host.to_string(),
+        timeout_ms,
+    };
+
+    let now = Instant::now();
+    {
+        let cache = pinned_client_cache().read().await;
+        if let Some(cached) = cache.get(&key) {
+            if cached.expires_at > now {
+                return Ok(cached.client.clone());
+            }
+        }
+    }
+
+    let client = build_http_client_pinned_async(timeout, url.clone()).await?;
+
+    {
+        let mut cache = pinned_client_cache().write().await;
+        cache.retain(|_, v| v.expires_at > now);
+        cache.insert(
+            key,
+            CachedPinnedClient {
+                client: client.clone(),
+                expires_at: now + DEFAULT_PINNED_CLIENT_TTL,
+            },
+        );
+    }
+
+    Ok(client)
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -277,8 +358,15 @@ pub(crate) async fn read_text_body_limited(
     resp: reqwest::Response,
     max_bytes: usize,
 ) -> anyhow::Result<String> {
-    let buf = read_body_bytes_limited(resp, max_bytes).await?;
-    Ok(String::from_utf8_lossy(&buf).into_owned())
+    let (buf, truncated) = read_body_bytes_truncated(resp, max_bytes).await?;
+    let mut out = String::from_utf8_lossy(&buf).into_owned();
+    if truncated {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str("[truncated]");
+    }
+    Ok(out)
 }
 
 async fn read_body_bytes_limited(
@@ -315,6 +403,46 @@ async fn read_body_bytes_limited(
     }
 
     Ok(buf)
+}
+
+async fn read_body_bytes_truncated(
+    mut resp: reqwest::Response,
+    max_bytes: usize,
+) -> anyhow::Result<(Vec<u8>, bool)> {
+    if max_bytes == 0 {
+        return Ok((Vec::new(), true));
+    }
+
+    let mut truncated = false;
+    if let Some(len) = resp.content_length() {
+        if len > max_bytes as u64 {
+            truncated = true;
+        }
+    }
+
+    let mut buf = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|err| {
+        anyhow::anyhow!(
+            "read response body failed ({})",
+            sanitize_reqwest_error(&err)
+        )
+    })? {
+        if buf.len() >= max_bytes {
+            truncated = true;
+            break;
+        }
+
+        let remaining = max_bytes - buf.len();
+        if chunk.len() > remaining {
+            buf.extend_from_slice(&chunk[..remaining]);
+            truncated = true;
+            break;
+        }
+
+        buf.extend_from_slice(&chunk);
+    }
+
+    Ok((buf, truncated))
 }
 
 #[cfg(test)]

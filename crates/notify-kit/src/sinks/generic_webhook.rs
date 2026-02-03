@@ -255,7 +255,14 @@ impl Sink for GenericWebhookSink {
                 return Ok(());
             }
 
-            let body = read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
+            let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await {
+                Ok(body) => body,
+                Err(err) => {
+                    return Err(anyhow::anyhow!(
+                        "generic webhook http error: {status} (failed to read response body: {err})"
+                    ));
+                }
+            };
             let summary = truncate_chars(body.trim(), 200);
             if summary.is_empty() {
                 return Err(anyhow::anyhow!(

@@ -21,6 +21,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-discord`：OpenCode 风格的 Discord bot 示例（channel/thread → session）。
 - `bots/opencode-telegram`：OpenCode 风格的 Telegram bot 示例（chat → session，long polling）。
 - `bots/_shared/session_store`：支持设置根目录（`rootDir`；bots 可用 `OPENCODE_SESSION_STORE_ROOT`）以限制 session store 文件路径。
+- `bots/_shared/opencode`：抽取 bots 共享逻辑（`assertEnv`/response 文本拼装/tool update 解析）。
+- `bots/_shared/log`：提供 `ignoreError`（best-effort 忽略错误）与 `OPENCODE_BOT_VERBOSE` 可选日志输出。
 - CI: GitHub Actions workflow（`./.github/workflows/ci.yml`）。
 - Docs: 刷新 `docs/README.md`/`docs/concepts.md` 的内置 sinks 列表；`.gitignore` 忽略 `node_modules/`。
 - Docs: 新增 mdBook 本地预览（含搜索）（`docs/book.toml` + `./scripts/docs.sh`）。
@@ -70,6 +72,10 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-wecom`：回调解密后校验 receiver（corp id），并加强 PKCS7 padding 校验。
 - `bots/opencode-dingtalk-stream`：校验 `sessionWebhook` 为 https 且 host 属于钉钉域名（降低 SSRF 风险）。
 - `bots/opencode-wecom`：增加 timestamp 时间窗与 nonce 去重（降低重放风险）。
+- Webhook/API sinks: DNS 公网 IP 校验增加超时与并发限制，避免阻塞/线程池耗尽，并对 pinned client 做短 TTL 缓存以减少重复解析。
+- `SlackWebhookSink` / `DiscordWebhookSink` / `GenericWebhookSink` / `BarkSink`：读取响应 body 失败时仍保留 HTTP status 错误上下文。
+- `BarkSink`：当响应看起来像 JSON 时，即使 Content-Type 缺失/错误也会尝试解析。
+- `bots/opencode-telegram`：支持 `OPENCODE_SESSION_STORE_PATH` 以持久化 chat → session 映射（可选）。
 - Docs: 修复 `./scripts/docs.sh test` 偶发的重复 rmeta 导致的 snippet 编译失败。
 
 ## [0.1.0] - 2026-01-31

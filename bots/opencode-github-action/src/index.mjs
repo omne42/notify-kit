@@ -5,13 +5,7 @@ import * as core from "@actions/core"
 import * as github from "@actions/github"
 import { createOpencode } from "@opencode-ai/sdk"
 
-function assertEnv(name) {
-  const value = process.env[name]
-  if (value === undefined || String(value).trim() === "") {
-    throw new Error(`missing required env: ${name}`)
-  }
-  return value
-}
+import { assertEnv, buildResponseText } from "../../_shared/opencode.mjs"
 
 function shouldRun(body) {
   const text = String(body || "")
@@ -132,13 +126,7 @@ async function run() {
       },
     })
 
-    const responseText =
-      result?.data?.info?.content ||
-      result?.data?.parts
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("\n") ||
-      "I received your message but didn't have a response."
+    const responseText = buildResponseText(result.data)
 
     const body = truncateForGitHub([url ? `OpenCode session: ${url}` : null, responseText].filter(Boolean).join("\n\n"))
     await octokit.rest.issues.createComment({
@@ -204,13 +192,7 @@ async function run() {
       },
     })
 
-    const responseText =
-      result?.data?.info?.content ||
-      result?.data?.parts
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("\n") ||
-      "I received your message but didn't have a response."
+    const responseText = buildResponseText(result.data)
 
     const body = truncateForGitHub([url ? `OpenCode session: ${url}` : null, responseText].filter(Boolean).join("\n\n"))
 

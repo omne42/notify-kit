@@ -4,15 +4,9 @@ import { createOpencode } from "@opencode-ai/sdk"
 import { Client, GatewayIntentBits, Partials } from "discord.js"
 
 import { createLimiter } from "../../_shared/limiter.mjs"
+import { ignoreError } from "../../_shared/log.mjs"
+import { assertEnv, buildResponseText, getCompletedToolUpdate } from "../../_shared/opencode.mjs"
 import { createSessionStore } from "../../_shared/session_store.mjs"
-
-function assertEnv(name) {
-  const value = process.env[name]
-  if (value === undefined || String(value).trim() === "") {
-    throw new Error(`missing required env: ${name}`)
-  }
-  return value
-}
 
 function truncateForDiscord(text, max = 1900) {
   const s = String(text || "")
@@ -65,7 +59,7 @@ const client = new Client({
 async function postChannelMessage(channelId, text) {
   const channel = await client.channels.fetch(channelId).catch(() => null)
   if (!channel || !channel.isTextBased()) return
-  await channel.send(truncateForDiscord(text)).catch(() => {})
+  await ignoreError(channel.send(truncateForDiscord(text)), "discord channel send failed")
 }
 
 async function ensureSession(channelId) {
@@ -122,28 +116,22 @@ async function handleUserText(channelId, text) {
     }
 
     const response = result.data
-    const responseText =
-      response?.info?.content ||
-      response?.parts
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("\n") ||
-      "I received your message but didn't have a response."
+    const responseText = buildResponseText(response)
 
     await postChannelMessage(channelId, responseText)
   })
 }
 
 async function handleToolUpdate(part) {
-  if (!part || part.type !== "tool") return
-  if (!part.state || part.state.status !== "completed") return
+  const update = getCompletedToolUpdate(part)
+  if (!update) return
 
-  const sessionId = part.sessionID
+  const sessionId = update.sessionId
   const channelId = sessionToChannel.get(sessionId)
   if (!channelId) return
 
-  const title = part.state.title || "completed"
-  const tool = part.tool || "tool"
+  const title = update.title
+  const tool = update.tool
   await postChannelMessage(channelId, `*${tool}* - ${title}`)
 }
 

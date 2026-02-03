@@ -6,15 +6,9 @@ import { XMLParser } from "fast-xml-parser"
 import { createOpencode } from "@opencode-ai/sdk"
 
 import { createLimiter } from "../../_shared/limiter.mjs"
+import { ignoreError } from "../../_shared/log.mjs"
+import { assertEnv, buildResponseText, getCompletedToolUpdate } from "../../_shared/opencode.mjs"
 import { createSessionStore } from "../../_shared/session_store.mjs"
-
-function assertEnv(name, { optional = false } = {}) {
-  const value = process.env[name]
-  if ((value === undefined || String(value).trim() === "") && !optional) {
-    throw new Error(`missing required env: ${name}`)
-  }
-  return value
-}
 
 assertEnv("WECOM_CORP_ID")
 assertEnv("WECOM_CORP_SECRET")
@@ -139,22 +133,28 @@ async function wecomPost(path, body) {
 async function sendTextToUser(userId, text) {
   if (!userId || !text) return
   const agentId = Number.parseInt(String(process.env.WECOM_AGENT_ID), 10)
-  await wecomPost("message/send", {
-    touser: userId,
-    msgtype: "text",
-    agentid: agentId,
-    text: { content: text },
-    safe: 0,
-  }).catch(() => {})
+  await ignoreError(
+    wecomPost("message/send", {
+      touser: userId,
+      msgtype: "text",
+      agentid: agentId,
+      text: { content: text },
+      safe: 0,
+    }),
+    "wecom sendTextToUser failed",
+  )
 }
 
 async function sendTextToChat(chatId, text) {
   if (!chatId || !text) return
-  await wecomPost("appchat/send", {
-    chatid: chatId,
-    msgtype: "text",
-    text: { content: text },
-  }).catch(() => {})
+  await ignoreError(
+    wecomPost("appchat/send", {
+      chatid: chatId,
+      msgtype: "text",
+      text: { content: text },
+    }),
+    "wecom sendTextToChat failed",
+  )
 }
 
 async function sendText({ userId, chatId }, text) {
@@ -243,29 +243,19 @@ async function handleUserText(ctx, text) {
       return
     }
 
-    const response = result.data
-    const responseText =
-      response?.info?.content ||
-      response?.parts
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("\n") ||
-      "I received your message but didn't have a response."
+    const responseText = buildResponseText(result.data)
 
     await sendText(ctx, responseText)
   })
 }
 
 async function handleToolUpdate(part) {
-  if (!part || part.type !== "tool") return
-  if (!part.state || part.state.status !== "completed") return
+  const update = getCompletedToolUpdate(part)
+  if (!update) return
 
-  const sessionId = part.sessionID
   for (const session of sessions.values()) {
-    if (session.sessionId !== sessionId) continue
-    const title = part.state.title || "completed"
-    const tool = part.tool || "tool"
-    await sendText(session, `${tool} - ${title}`)
+    if (session.sessionId !== update.sessionId) continue
+    await sendText(session, `${update.tool} - ${update.title}`)
     break
   }
 }

@@ -2,13 +2,9 @@ import { createOpencode } from "@opencode-ai/sdk"
 import { DWClient, DWClientDownStream, EventAck, TOPIC_ROBOT } from "dingtalk-stream"
 
 import { createLimiter } from "../../_shared/limiter.mjs"
+import { ignoreError } from "../../_shared/log.mjs"
+import { assertEnv, buildResponseText, getCompletedToolUpdate } from "../../_shared/opencode.mjs"
 import { createSessionStore } from "../../_shared/session_store.mjs"
-
-function assertEnv(name) {
-  if (!process.env[name] || String(process.env[name]).trim() === "") {
-    throw new Error(`missing required env: ${name}`)
-  }
-}
 
 assertEnv("DINGTALK_CLIENT_ID")
 assertEnv("DINGTALK_CLIENT_SECRET")
@@ -63,17 +59,20 @@ function validateSessionWebhook(sessionWebhook) {
 
 async function postSessionMessage(sessionWebhook, text) {
   const accessToken = await client.getAccessToken()
-  await fetch(sessionWebhook, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-acs-dingtalk-access-token": accessToken,
-    },
-    body: JSON.stringify({
-      msgtype: "text",
-      text: { content: text },
+  await ignoreError(
+    fetch(sessionWebhook, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-acs-dingtalk-access-token": accessToken,
+      },
+      body: JSON.stringify({
+        msgtype: "text",
+        text: { content: text },
+      }),
     }),
-  }).catch(() => {})
+    "dingtalk send message failed",
+  )
 }
 
 async function ensureSession(sessionWebhook) {
@@ -128,29 +127,19 @@ async function handleUserText(sessionWebhook, text) {
       return
     }
 
-    const response = result.data
-    const responseText =
-      response?.info?.content ||
-      response?.parts
-        ?.filter((p) => p.type === "text")
-        .map((p) => p.text)
-        .join("\n") ||
-      "I received your message but didn't have a response."
+    const responseText = buildResponseText(result.data)
 
     await postSessionMessage(sessionWebhook, responseText)
   })
 }
 
 async function handleToolUpdate(part) {
-  if (!part || part.type !== "tool") return
-  if (!part.state || part.state.status !== "completed") return
+  const update = getCompletedToolUpdate(part)
+  if (!update) return
 
-  const sessionId = part.sessionID
   for (const session of sessions.values()) {
-    if (session.sessionId !== sessionId) continue
-    const title = part.state.title || "completed"
-    const tool = part.tool || "tool"
-    await postSessionMessage(session.sessionWebhook, `${tool} - ${title}`)
+    if (session.sessionId !== update.sessionId) continue
+    await postSessionMessage(session.sessionWebhook, `${update.tool} - ${update.title}`)
     break
   }
 }

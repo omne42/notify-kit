@@ -162,7 +162,15 @@ impl Sink for BarkSink {
 
             let status = resp.status();
             if !status.is_success() {
-                let body = read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
+                let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await
+                {
+                    Ok(body) => body,
+                    Err(err) => {
+                        return Err(anyhow::anyhow!(
+                            "bark http error: {status} (failed to read response body: {err})"
+                        ));
+                    }
+                };
                 let summary = truncate_chars(body.trim(), 200);
                 if summary.is_empty() {
                     return Err(anyhow::anyhow!(
@@ -179,15 +187,25 @@ impl Sink for BarkSink {
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|v| v.to_ascii_lowercase().contains("application/json"));
-            if !content_type_is_json {
-                return Ok(());
-            }
 
-            let body = read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
+            let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await {
+                Ok(body) => body,
+                Err(err) => {
+                    return Err(anyhow::anyhow!(
+                        "bark api error: {status} (failed to read response body: {err})"
+                    ));
+                }
+            };
             let body = body.trim();
             if body.is_empty() {
                 return Ok(());
             }
+
+            let maybe_json = content_type_is_json || body.starts_with('{') || body.starts_with('[');
+            if !maybe_json {
+                return Ok(());
+            }
+
             let body: serde_json::Value =
                 serde_json::from_str(body).map_err(|_| anyhow::anyhow!("decode json failed"))?;
 

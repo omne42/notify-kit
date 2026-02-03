@@ -1,6 +1,9 @@
+import fsSync from "node:fs"
 import fs from "node:fs/promises"
 import path from "node:path"
 import process from "node:process"
+
+import { ignoreError, logError } from "./log.mjs"
 
 async function safeReadJson(filePath) {
   try {
@@ -22,16 +25,24 @@ async function atomicWriteUtf8(filePath, content) {
   } catch (err) {
     // Windows may fail to replace an existing file.
     if (err && (err.code === "EEXIST" || err.code === "EPERM")) {
-      await fs.unlink(filePath).catch(() => {})
+      await ignoreError(fs.unlink(filePath), "session store unlink failed")
       await fs.rename(tmp, filePath)
       return
     }
-    await fs.unlink(tmp).catch(() => {})
+    await ignoreError(fs.unlink(tmp), "session store unlink failed")
     throw err
   }
 }
 
 let exitHooksInstalled = false
+
+function safeRealpathSync(p) {
+  try {
+    return fsSync.realpathSync(p)
+  } catch {
+    return null
+  }
+}
 
 function resolveStorePath(filePath, rootDir) {
   const raw = String(filePath || "").trim()
@@ -42,7 +53,11 @@ function resolveStorePath(filePath, rootDir) {
 
   if (!root) return resolved
 
-  const rel = path.relative(root, resolved)
+  const rootReal = safeRealpathSync(root) || root
+  const storeDir = path.dirname(resolved)
+  const storeDirReal = safeRealpathSync(storeDir) || storeDir
+
+  const rel = path.relative(rootReal, storeDirReal)
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
     throw new Error(`session store path must be within rootDir: ${root}`)
   }
@@ -77,7 +92,9 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
     if (flushTimer) return
     flushTimer = setTimeout(() => {
       flushTimer = null
-      pending = pending.then(flushNow).catch(() => {})
+      pending = pending.then(flushNow).catch((err) => {
+        logError("session store flush failed", err)
+      })
     }, flushDebounceMs)
   }
 
@@ -96,7 +113,7 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
     if (exitHooksInstalled) return
     exitHooksInstalled = true
 
-    const flush = () => flushNow().catch(() => {})
+    const flush = () => flushNow().catch((err) => logError("session store flush failed", err))
     process.on("beforeExit", flush)
     process.on("SIGINT", async () => {
       await flush()

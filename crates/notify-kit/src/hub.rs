@@ -33,7 +33,8 @@ pub struct HubConfig {
     ///
     /// This is a **hard upper bound** enforced by `Hub` (via `tokio::time::timeout`) around each
     /// `Sink::send`. If a sink has its own internal timeout (e.g. an HTTP request timeout), keep
-    /// `per_sink_timeout` >= that value, otherwise `Hub` may time out first.
+    /// `per_sink_timeout` >= that value (and ideally leave some slack for preflight work like DNS
+    /// checks), otherwise `Hub` may time out first.
     pub per_sink_timeout: Duration,
 }
 
