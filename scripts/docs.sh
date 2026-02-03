@@ -29,6 +29,7 @@ case "$cmd" in
   test)
     shift || true
     docs_target_dir="$repo_root/target/mdbook-test"
+    rm -rf "$docs_target_dir"
     (
       cd "$repo_root"
       CARGO_TARGET_DIR="$docs_target_dir" cargo build -p notify-kit

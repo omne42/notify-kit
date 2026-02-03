@@ -13,7 +13,7 @@ This file is an LLM-friendly bundle of the `notify-kit` documentation and exampl
 
 一个轻量的通知 Hub（Rust），用于把任意事件推送到多个通知渠道（sinks）。
 
-> 这是一份可直接导入 GitBook 的文档（`docs/README.md` + `docs/SUMMARY.md`）。
+> 这是 `mdBook` 文档（入口：`docs/README.md`，目录：`docs/SUMMARY.md`）。
 
 ## 你将获得什么
 
@@ -65,6 +65,7 @@ This file is an LLM-friendly bundle of the `notify-kit` documentation and exampl
 - Bots： [Bots（交互式集成示例）](bots.md)
 - 集成： [集成与配置](integration.md)
 - 安全： [安全](security.md)
+- LLM 入口： [llms.txt](llms.md)
 
 下一步：从 [快速开始](getting-started.md) 开始。
 
@@ -151,6 +152,7 @@ This file is an LLM-friendly bundle of the `notify-kit` documentation and exampl
 
 `SoundConfig.command_argv` 会执行外部命令：
 
+- 需要启用 crate feature：`notify-kit/sound-command`
 - 仅应由**本机受信任配置**提供
 - 不要把不可信数据拼接到 argv（避免命令执行风险）
 
@@ -197,6 +199,7 @@ Webhook 发送本质是“服务端发起 HTTP 请求”。如果 URL 可被不�
 为降低 DNS 污染 / DNS rebinding / 内网解析等风险，内置 HTTP sinks 默认会在发送前做一次 DNS 解析校验：
 
 - 若解析到私网/loopback/link-local，会拒绝发送
+- 校验通过后，会把本次解析结果固定到该次请求的 DNS overrides（降低“校验后被 rebinding”的 TOCTOU 风险）
 - 可通过各 sink 的 `with_public_ip_check(false)` 关闭（Feishu 的 `*_strict` 额外会在构造时也校验一次）
 
 注意：这是一个“更严格、更保守”的策略；在无网络/DNS 不可用时可能导致发送失败。`*_strict` 构造函数会把校验提前到构造阶段。
@@ -245,6 +248,57 @@ Webhook 发送本质是“服务端发起 HTTP 请求”。如果 URL 可被不�
 - 限制最大长度
 - 对高敏感字段做删减/脱敏
 - 必要时引入 allow-list（只发部分 kind）
+
+---
+## docs/llms.md
+
+# llms.txt（给 Cursor / Copilot / Claude 等）
+
+本仓库提供一个 **LLM 友好**的文档打包文件：`llms.txt`。
+
+它会把 `docs/`（按 `docs/SUMMARY.md` 顺序）以及 `bots/*/README.md` 组合成一个大文件，方便你把“仓库说明 + 文档 + 示例”一次性喂给大模型做问答/检索/生成代码。
+
+## 如何生成
+
+在仓库根目录执行：
+
+```bash
+./scripts/build-llms-txt.sh
+```
+
+生成后的文件路径：
+
+- `./llms.txt`
+
+## 如何使用
+
+一个推荐的提问模板：
+
+```text
+Documentation:
+
+{paste llms.txt here}
+
+---
+
+Based on the above documentation, answer the following:
+
+{your question}
+```
+
+## 注意事项
+
+- `llms.txt` 会去掉 mdBook Rust 代码块里以 `#` 开头的隐藏行（减少噪音）。
+- `llms.txt` 可能包含你在 `docs/` / `bots/` 里写的示例配置；请避免把真实 token / webhook URL 写进文档。
+
+
+---
+## docs/changelog.md
+
+# Changelog
+
+{{#include ../CHANGELOG.md}}
+
 
 ---
 ## docs/getting-started.md
@@ -855,6 +909,8 @@ let sink = SoundSink::new(SoundConfig { command_argv: None });
 `notify-kit` 只负责发出 bell；是否“闪”取决于你的终端/系统设置。
 
 ## 外部命令
+
+> 需要启用 crate feature：`notify-kit/sound-command`。
 
 ```rust,no_run,edition2021
 use notify_kit::{SoundConfig, SoundSink};
@@ -1556,18 +1612,17 @@ cargo test --workspace
 ## 目录结构
 
 - `crates/notify-kit/`：库实现
-- `docs/`：GitBook 文档（本目录）
+- `docs/`：mdBook 文档（本目录）
 - `scripts/gate.sh`：格式化/编译门禁
 
 ## 文档维护
 
 - 改动文档：直接编辑 `docs/*.md`
 - 目录结构：编辑 `docs/SUMMARY.md`
-- 如果你使用 GitBook：把 Book root 指向 `docs/`
 
 ## 本地预览（mdBook）
 
-本目录的结构兼容 mdBook（使用 `SUMMARY.md` 作为目录）。你可以用 mdBook 本地预览（含搜索）：
+本目录使用 `SUMMARY.md` 作为目录。你可以用 mdBook 本地预览（含搜索）：
 
 ```bash
 ./scripts/docs.sh serve

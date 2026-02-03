@@ -42,7 +42,7 @@ notify-kit = { path = "crates/notify-kit" }
 
 ## 文档
 
-- GitBook：`docs/README.md`（目录：`docs/SUMMARY.md`）
+- mdBook：`docs/README.md`（目录：`docs/SUMMARY.md`）
 - 本地预览（含搜索）：`./scripts/docs.sh serve`（需要先 `cargo install mdbook`）
 - Rustdoc：`cargo doc -p notify-kit --open`
 - LLM 友好入口：`llms.txt`（由 `./scripts/build-llms-txt.sh` 生成）
@@ -77,7 +77,7 @@ hub.notify(Event::new("turn_completed", Severity::Success, "done"));
 
 ## 安全提示
 
-- `SoundConfig.command_argv` 会执行外部命令；应视为 **受信任/本机配置**。
+- `SoundConfig.command_argv` 会执行外部命令（需要启用 `notify-kit/sound-command`）；应视为 **受信任/本机配置**。
 - `FeishuWebhookSink` 会校验 webhook URL：仅允许 `https` + `open.feishu.cn` / `open.larksuite.com`，且不会在 `Debug`/错误信息中输出完整 URL。
 
 ## 配置（环境变量）

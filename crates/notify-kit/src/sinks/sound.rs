@@ -1,8 +1,13 @@
 use std::io::Write;
+#[cfg(not(feature = "sound-command"))]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Event;
 use crate::event::Severity;
 use crate::sinks::{BoxFuture, Sink};
+
+#[cfg(not(feature = "sound-command"))]
+static WARNED_SOUND_COMMAND_DISABLED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone)]
 pub struct SoundConfig {
@@ -40,6 +45,7 @@ impl SoundSink {
         Ok(())
     }
 
+    #[cfg(feature = "sound-command")]
     fn send_command(command_argv: &[String]) -> anyhow::Result<()> {
         let (program, args) = command_argv
             .split_first()
@@ -84,9 +90,24 @@ impl Sink for SoundSink {
 
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            if let Some(argv) = self.command_argv.as_deref() {
-                Self::send_command(argv)?;
-                return Ok(());
+            if let Some(_argv) = self.command_argv.as_deref() {
+                #[cfg(feature = "sound-command")]
+                {
+                    Self::send_command(_argv)?;
+                    return Ok(());
+                }
+
+                #[cfg(not(feature = "sound-command"))]
+                {
+                    if !WARNED_SOUND_COMMAND_DISABLED.swap(true, Ordering::Relaxed) {
+                        tracing::warn!(
+                            sink = "sound",
+                            "sound command_argv configured but feature \"sound-command\" is disabled; falling back to terminal bell"
+                        );
+                    }
+                    Self::send_terminal_bell(event)?;
+                    return Ok(());
+                }
             }
 
             Self::send_terminal_bell(event)?;
@@ -97,14 +118,17 @@ impl Sink for SoundSink {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "sound-command")]
     use super::*;
 
+    #[cfg(feature = "sound-command")]
     #[test]
     fn send_command_rejects_empty_argv() {
         let err = SoundSink::send_command(&[]).expect_err("expected error");
         assert!(err.to_string().contains("argv is empty"), "{err:#}");
     }
 
+    #[cfg(feature = "sound-command")]
     #[test]
     fn send_command_rejects_empty_program() {
         let err = SoundSink::send_command(&[String::from("  ")]).expect_err("expected error");

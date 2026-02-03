@@ -1,6 +1,9 @@
 import { createOpencode } from "@opencode-ai/sdk"
 import { DWClient, DWClientDownStream, EventAck, TOPIC_ROBOT } from "dingtalk-stream"
 
+import { createLimiter } from "../../_shared/limiter.mjs"
+import { createSessionStore } from "../../_shared/session_store.mjs"
+
 function assertEnv(name) {
   if (!process.env[name] || String(process.env[name]).trim() === "") {
     throw new Error(`missing required env: ${name}`)
@@ -14,6 +17,14 @@ console.log("🚀 Starting opencode server...")
 const opencode = await createOpencode({ port: 0 })
 console.log("✅ Opencode server ready")
 
+const limiter = createLimiter({ maxInflight: process.env.OPENCODE_BOT_MAX_INFLIGHT || "4" })
+const store = createSessionStore(process.env.OPENCODE_SESSION_STORE_PATH)
+await store.load()
+store.installExitHooks()
+if (store.enabled) {
+  console.log(`🗄️ Session store enabled: ${store.path}`)
+}
+
 const client = new DWClient({
   clientId: process.env.DINGTALK_CLIENT_ID,
   clientSecret: process.env.DINGTALK_CLIENT_SECRET,
@@ -23,7 +34,7 @@ const client = new DWClient({
  * sessionKey = sessionWebhook
  * value = { sessionId, sessionWebhook }
  */
-const sessions = new Map()
+const sessions = store.map
 
 function validateSessionWebhook(sessionWebhook) {
   let url
@@ -76,7 +87,7 @@ async function ensureSession(sessionWebhook) {
   }
 
   session = { sessionId: created.data.id, sessionWebhook }
-  sessions.set(sessionKey, session)
+  store.set(sessionKey, session)
 
   const share = await opencode.client.session.share({ path: { id: session.sessionId } })
   const url = share?.data?.share?.url
@@ -96,34 +107,36 @@ async function handleUserText(sessionWebhook, text) {
     return
   }
 
-  let session
-  try {
-    session = await ensureSession(sessionWebhook)
-  } catch {
-    await postSessionMessage(sessionWebhook, "Sorry, I had trouble creating a session.")
-    return
-  }
+  await limiter.run(async () => {
+    let session
+    try {
+      session = await ensureSession(sessionWebhook)
+    } catch {
+      await postSessionMessage(sessionWebhook, "Sorry, I had trouble creating a session.")
+      return
+    }
 
-  const result = await opencode.client.session.prompt({
-    path: { id: session.sessionId },
-    body: { parts: [{ type: "text", text: trimmed }] },
+    const result = await opencode.client.session.prompt({
+      path: { id: session.sessionId },
+      body: { parts: [{ type: "text", text: trimmed }] },
+    })
+
+    if (result.error) {
+      await postSessionMessage(sessionWebhook, "Sorry, I had trouble processing your message.")
+      return
+    }
+
+    const response = result.data
+    const responseText =
+      response?.info?.content ||
+      response?.parts
+        ?.filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n") ||
+      "I received your message but didn't have a response."
+
+    await postSessionMessage(sessionWebhook, responseText)
   })
-
-  if (result.error) {
-    await postSessionMessage(sessionWebhook, "Sorry, I had trouble processing your message.")
-    return
-  }
-
-  const response = result.data
-  const responseText =
-    response?.info?.content ||
-    response?.parts
-      ?.filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n") ||
-    "I received your message but didn't have a response."
-
-  await postSessionMessage(sessionWebhook, responseText)
 }
 
 async function handleToolUpdate(part) {

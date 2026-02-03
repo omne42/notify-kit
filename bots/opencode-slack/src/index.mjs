@@ -1,6 +1,9 @@
 import { App } from "@slack/bolt"
 import { createOpencode } from "@opencode-ai/sdk"
 
+import { createLimiter } from "../../_shared/limiter.mjs"
+import { createSessionStore } from "../../_shared/session_store.mjs"
+
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN,
   signingSecret: process.env.SLACK_SIGNING_SECRET,
@@ -22,11 +25,19 @@ console.log("🚀 Starting opencode server...")
 const opencode = await createOpencode({ port: 0 })
 console.log("✅ Opencode server ready")
 
+const limiter = createLimiter({ maxInflight: process.env.OPENCODE_BOT_MAX_INFLIGHT || "4" })
+const store = createSessionStore(process.env.OPENCODE_SESSION_STORE_PATH)
+await store.load()
+store.installExitHooks()
+if (store.enabled) {
+  console.log(`🗄️ Session store enabled: ${store.path}`)
+}
+
 /**
  * sessionKey = `${channel}-${threadTs}`
  * value = { sessionId, channel, threadTs }
  */
-const sessions = new Map()
+const sessions = store.map
 
 async function postThreadMessage(channel, threadTs, text) {
   await app.client.chat
@@ -67,56 +78,58 @@ async function handleToolUpdate(part) {
 app.message(async ({ message, say }) => {
   if (!message || message.subtype || !("text" in message) || !message.text) return
 
-  const channel = message.channel
-  const threadTs = message.thread_ts || message.ts
-  const sessionKey = `${channel}-${threadTs}`
+  await limiter.run(async () => {
+    const channel = message.channel
+    const threadTs = message.thread_ts || message.ts
+    const sessionKey = `${channel}-${threadTs}`
 
-  let session = sessions.get(sessionKey)
-  if (!session) {
-    const createResult = await opencode.client.session.create({
-      body: { title: `Slack thread ${threadTs}` },
+    let session = sessions.get(sessionKey)
+    if (!session) {
+      const createResult = await opencode.client.session.create({
+        body: { title: `Slack thread ${threadTs}` },
+      })
+      if (createResult.error) {
+        await say({
+          text: "Sorry, I had trouble creating a session. Please try again.",
+          thread_ts: threadTs,
+        })
+        return
+      }
+
+      session = { sessionId: createResult.data.id, channel, threadTs }
+      store.set(sessionKey, session)
+
+      const shareResult = await opencode.client.session.share({ path: { id: session.sessionId } })
+      const url = shareResult?.data?.share?.url
+      if (url) {
+        await postThreadMessage(channel, threadTs, url)
+      }
+    }
+
+    const result = await opencode.client.session.prompt({
+      path: { id: session.sessionId },
+      body: { parts: [{ type: "text", text: message.text }] },
     })
-    if (createResult.error) {
+
+    if (result.error) {
       await say({
-        text: "Sorry, I had trouble creating a session. Please try again.",
+        text: "Sorry, I had trouble processing your message. Please try again.",
         thread_ts: threadTs,
       })
       return
     }
 
-    session = { sessionId: createResult.data.id, channel, threadTs }
-    sessions.set(sessionKey, session)
+    const response = result.data
+    const responseText =
+      response?.info?.content ||
+      response?.parts
+        ?.filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n") ||
+      "I received your message but didn't have a response."
 
-    const shareResult = await opencode.client.session.share({ path: { id: session.sessionId } })
-    const url = shareResult?.data?.share?.url
-    if (url) {
-      await postThreadMessage(channel, threadTs, url)
-    }
-  }
-
-  const result = await opencode.client.session.prompt({
-    path: { id: session.sessionId },
-    body: { parts: [{ type: "text", text: message.text }] },
+    await say({ text: responseText, thread_ts: threadTs })
   })
-
-  if (result.error) {
-    await say({
-      text: "Sorry, I had trouble processing your message. Please try again.",
-      thread_ts: threadTs,
-    })
-    return
-  }
-
-  const response = result.data
-  const responseText =
-    response?.info?.content ||
-    response?.parts
-      ?.filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n") ||
-    "I received your message but didn't have a response."
-
-  await say({ text: responseText, thread_ts: threadTs })
 })
 
 app.command("/test", async ({ ack, say }) => {
@@ -126,4 +139,3 @@ app.command("/test", async ({ ack, say }) => {
 
 await app.start()
 console.log("⚡️ Slack bot is running!")
-

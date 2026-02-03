@@ -12,6 +12,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `Hub::new_with_inflight_limit`：限制 `notify()` 的后台并发，超限会丢弃并 warning（背压/防 DoS）。
 - `FeishuWebhookConfig`：新增 `max_chars`/`with_max_chars` 与 `enforce_public_ip`/`with_public_ip_check`。
 - `GenericWebhookConfig::new_strict` / `GenericWebhookSink::new_strict`：提供更严格的 SSRF 防护（强制 host allow-list + path 前缀 + 公网 IP 校验）。
+- `notify-kit/sound-command`：允许 `SoundSink` 执行外部命令播放提示音（默认关闭，未启用时回退为终端 bell）。
 - `bots/opencode-slack`：OpenCode 风格的 Slack Socket Mode bot 示例（thread → session）。
 - `bots/opencode-feishu`：OpenCode 风格的飞书 bot 示例（chat → session）。
 - `bots/opencode-dingtalk-stream`：OpenCode 风格的钉钉 Stream Mode bot 示例（sessionWebhook → session）。
@@ -19,9 +20,11 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-wecom`：OpenCode 风格的企业微信（WeCom）回调 bot 示例（消息回调 → session）。
 - `bots/opencode-discord`：OpenCode 风格的 Discord bot 示例（channel/thread → session）。
 - `bots/opencode-telegram`：OpenCode 风格的 Telegram bot 示例（chat → session，long polling）。
+- CI: GitHub Actions workflow（`./.github/workflows/ci.yml`）。
 - Docs: 刷新 `docs/README.md`/`docs/concepts.md` 的内置 sinks 列表；`.gitignore` 忽略 `node_modules/`。
 - Docs: 新增 mdBook 本地预览（含搜索）（`docs/book.toml` + `./scripts/docs.sh`）。
 - Docs: 新增 `llms.txt` 聚合文档（`./scripts/build-llms-txt.sh` 生成）。
+- Docs: 新增 `docs/llms.md` 与 `docs/changelog.md`。
 - Docs: 新增 `docs/bots.md`，集中说明 OpenCode 风格 bot 示例。
 - Docs: 新增 `docs/examples.md`（Examples / Recipes）与 sinks 速览矩阵。
 - New sinks:
@@ -42,7 +45,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
 - All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
-- Docs: add GitBook-style documentation under `docs/` and link from README.
+- Docs: 统一为 mdBook 文档（`./scripts/docs.sh` 本地预览/测试）。
 - Dev: 在提交门禁中增加 bot 示例的 Node.js 语法校验（不要求安装依赖）。
 - Docs: 重构 `docs/SUMMARY.md` 的信息架构（Overview / Getting Started / Guides / Reference / Sinks）。
 - Docs: `./scripts/docs.sh` 允许透传 mdBook 参数（便于容器/远程预览）。
@@ -55,12 +58,14 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `SoundSink`：调整测试模块位置以通过 clippy（`items_after_test_module`）。
 - `dingtalk` / `wecom` sink：2xx 响应但 body 非 JSON/读取失败时不再误判为失败（只在明确 errcode 非 0 时失败）。
 - `serverchan` sink：错误信息不再回显第三方返回的 message（保持低敏感）。
+- Webhook/API sinks: 修复 `enforce_public_ip` 打开时未实际使用 pinned client 的问题。
+- `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：严格模式下禁止关闭公网 IP 校验。
 - `bots/opencode-feishu`：修正 Feishu SDK 的 ESM 导入与事件名（`im.message.receive_v1`），并启用 callback challenge 自动处理。
 - `bots/opencode-github-action`：修正示例安装命令为 `npm install`（仓库未提供 lockfile，避免 `npm ci` 失败）。
 - `bots/opencode-wecom`：回调解密后校验 receiver（corp id），并加强 PKCS7 padding 校验。
 - `bots/opencode-dingtalk-stream`：校验 `sessionWebhook` 为 https 且 host 属于钉钉域名（降低 SSRF 风险）。
 - `bots/opencode-wecom`：增加 timestamp 时间窗与 nonce 去重（降低重放风险）。
-- Docs: 修正 mdBook 配置字段，确保 `./scripts/docs.sh test` 可用（编译 Rust 代码片段）。
+- Docs: 修复 `./scripts/docs.sh test` 偶发的重复 rmeta 导致的 snippet 编译失败。
 
 ## [0.1.0] - 2026-01-31
 

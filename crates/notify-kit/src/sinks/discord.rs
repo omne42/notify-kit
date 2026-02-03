@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use crate::Event;
 use crate::sinks::http::{
-    build_http_client, parse_and_validate_https_url, redact_url, redact_url_str,
-    sanitize_reqwest_error, validate_url_path_prefix, validate_url_resolves_to_public_ip_async,
+    build_http_client, build_http_client_pinned_async, parse_and_validate_https_url, redact_url,
+    redact_url_str, sanitize_reqwest_error, validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
@@ -62,6 +62,7 @@ impl DiscordWebhookConfig {
 pub struct DiscordWebhookSink {
     webhook_url: reqwest::Url,
     client: reqwest::Client,
+    timeout: Duration,
     max_chars: usize,
     enforce_public_ip: bool,
 }
@@ -84,6 +85,7 @@ impl DiscordWebhookSink {
         Ok(Self {
             webhook_url,
             client,
+            timeout: config.timeout,
             max_chars: config.max_chars,
             enforce_public_ip: config.enforce_public_ip,
         })
@@ -102,13 +104,14 @@ impl Sink for DiscordWebhookSink {
 
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
-            if self.enforce_public_ip {
-                validate_url_resolves_to_public_ip_async(self.webhook_url.clone()).await?;
-            }
+            let client = if self.enforce_public_ip {
+                build_http_client_pinned_async(self.timeout, self.webhook_url.clone()).await?
+            } else {
+                self.client.clone()
+            };
             let payload = Self::build_payload(event, self.max_chars);
 
-            let resp = self
-                .client
+            let resp = client
                 .post(self.webhook_url.clone())
                 .json(&payload)
                 .send()

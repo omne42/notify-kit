@@ -5,6 +5,9 @@ import { URL } from "node:url"
 import { XMLParser } from "fast-xml-parser"
 import { createOpencode } from "@opencode-ai/sdk"
 
+import { createLimiter } from "../../_shared/limiter.mjs"
+import { createSessionStore } from "../../_shared/session_store.mjs"
+
 function assertEnv(name, { optional = false } = {}) {
   const value = process.env[name]
   if ((value === undefined || String(value).trim() === "") && !optional) {
@@ -167,11 +170,19 @@ console.log("🚀 Starting opencode server...")
 const opencode = await createOpencode({ port: 0 })
 console.log("✅ Opencode server ready")
 
+const limiter = createLimiter({ maxInflight: process.env.OPENCODE_BOT_MAX_INFLIGHT || "4" })
+const store = createSessionStore(process.env.OPENCODE_SESSION_STORE_PATH)
+await store.load()
+store.installExitHooks()
+if (store.enabled) {
+  console.log(`🗄️ Session store enabled: ${store.path}`)
+}
+
 /**
  * sessionKey = `${scope}-${id}`
  * value = { sessionId, userId, chatId }
  */
-const sessions = new Map()
+const sessions = store.map
 
 function getSessionKey({ userId, chatId }) {
   if (sessionScope === "chat" && chatId) return `chat-${chatId}`
@@ -191,7 +202,7 @@ async function ensureSession(ctx) {
   }
 
   session = { sessionId: created.data.id, userId: ctx.userId, chatId: ctx.chatId || null }
-  sessions.set(key, session)
+  store.set(key, session)
 
   const share = await opencode.client.session.share({ path: { id: session.sessionId } })
   const url = share?.data?.share?.url
@@ -211,34 +222,36 @@ async function handleUserText(ctx, text) {
     return
   }
 
-  let session
-  try {
-    session = await ensureSession(ctx)
-  } catch {
-    await sendText(ctx, "Sorry, I had trouble creating a session.")
-    return
-  }
+  await limiter.run(async () => {
+    let session
+    try {
+      session = await ensureSession(ctx)
+    } catch {
+      await sendText(ctx, "Sorry, I had trouble creating a session.")
+      return
+    }
 
-  const result = await opencode.client.session.prompt({
-    path: { id: session.sessionId },
-    body: { parts: [{ type: "text", text: trimmed }] },
+    const result = await opencode.client.session.prompt({
+      path: { id: session.sessionId },
+      body: { parts: [{ type: "text", text: trimmed }] },
+    })
+
+    if (result.error) {
+      await sendText(ctx, "Sorry, I had trouble processing your message.")
+      return
+    }
+
+    const response = result.data
+    const responseText =
+      response?.info?.content ||
+      response?.parts
+        ?.filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n") ||
+      "I received your message but didn't have a response."
+
+    await sendText(ctx, responseText)
   })
-
-  if (result.error) {
-    await sendText(ctx, "Sorry, I had trouble processing your message.")
-    return
-  }
-
-  const response = result.data
-  const responseText =
-    response?.info?.content ||
-    response?.parts
-      ?.filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n") ||
-    "I received your message but didn't have a response."
-
-  await sendText(ctx, responseText)
 }
 
 async function handleToolUpdate(part) {

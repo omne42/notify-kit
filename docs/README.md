@@ -2,7 +2,7 @@
 
 一个轻量的通知 Hub（Rust），用于把任意事件推送到多个通知渠道（sinks）。
 
-> 这是一份可直接导入 GitBook 的文档（`docs/README.md` + `docs/SUMMARY.md`）。
+> 这是 `mdBook` 文档（入口：`docs/README.md`，目录：`docs/SUMMARY.md`）。
 
 ## 你将获得什么
 
@@ -54,5 +54,6 @@
 - Bots： [Bots（交互式集成示例）](bots.md)
 - 集成： [集成与配置](integration.md)
 - 安全： [安全](security.md)
+- LLM 入口： [llms.txt](llms.md)
 
 下一步：从 [快速开始](getting-started.md) 开始。

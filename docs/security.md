@@ -4,6 +4,7 @@
 
 `SoundConfig.command_argv` 会执行外部命令：
 
+- 需要启用 crate feature：`notify-kit/sound-command`
 - 仅应由**本机受信任配置**提供
 - 不要把不可信数据拼接到 argv（避免命令执行风险）
 
@@ -50,6 +51,7 @@ Webhook 发送本质是“服务端发起 HTTP 请求”。如果 URL 可被不�
 为降低 DNS 污染 / DNS rebinding / 内网解析等风险，内置 HTTP sinks 默认会在发送前做一次 DNS 解析校验：
 
 - 若解析到私网/loopback/link-local，会拒绝发送
+- 校验通过后，会把本次解析结果固定到该次请求的 DNS overrides（降低“校验后被 rebinding”的 TOCTOU 风险）
 - 可通过各 sink 的 `with_public_ip_check(false)` 关闭（Feishu 的 `*_strict` 额外会在构造时也校验一次）
 
 注意：这是一个“更严格、更保守”的策略；在无网络/DNS 不可用时可能导致发送失败。`*_strict` 构造函数会把校验提前到构造阶段。

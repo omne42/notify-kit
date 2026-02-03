@@ -3,6 +3,9 @@ import process from "node:process"
 import { createOpencode } from "@opencode-ai/sdk"
 import { Client, GatewayIntentBits, Partials } from "discord.js"
 
+import { createLimiter } from "../../_shared/limiter.mjs"
+import { createSessionStore } from "../../_shared/session_store.mjs"
+
 function assertEnv(name) {
   const value = process.env[name]
   if (value === undefined || String(value).trim() === "") {
@@ -23,14 +26,29 @@ console.log("🚀 Starting opencode server...")
 const opencode = await createOpencode({ port: 0 })
 console.log("✅ Opencode server ready")
 
+const limiter = createLimiter({ maxInflight: process.env.OPENCODE_BOT_MAX_INFLIGHT || "4" })
+const store = createSessionStore(process.env.OPENCODE_SESSION_STORE_PATH)
+await store.load()
+store.installExitHooks()
+if (store.enabled) {
+  console.log(`🗄️ Session store enabled: ${store.path}`)
+}
+
 /**
  * channelId -> sessionId
  */
-const channelToSession = new Map()
+const channelToSession = store.map
 /**
  * sessionId -> channelId
  */
 const sessionToChannel = new Map()
+
+for (const [channelId, value] of channelToSession.entries()) {
+  const sessionId = typeof value === "string" ? value : value?.sessionId
+  if (sessionId) {
+    sessionToChannel.set(sessionId, channelId)
+  }
+}
 
 const client = new Client({
   intents: [
@@ -50,7 +68,8 @@ async function postChannelMessage(channelId, text) {
 
 async function ensureSession(channelId) {
   const existing = channelToSession.get(channelId)
-  if (existing) return { channelId, sessionId: existing }
+  const existingSessionId = typeof existing === "string" ? existing : existing?.sessionId
+  if (existingSessionId) return { channelId, sessionId: existingSessionId }
 
   const created = await opencode.client.session.create({
     body: { title: `Discord channel ${channelId}` },
@@ -60,7 +79,7 @@ async function ensureSession(channelId) {
   }
 
   const sessionId = created.data.id
-  channelToSession.set(channelId, sessionId)
+  store.set(channelId, sessionId)
   sessionToChannel.set(sessionId, channelId)
 
   const share = await opencode.client.session.share({ path: { id: sessionId } })
@@ -81,34 +100,36 @@ async function handleUserText(channelId, text) {
     return
   }
 
-  let session
-  try {
-    session = await ensureSession(channelId)
-  } catch {
-    await postChannelMessage(channelId, "Sorry, I had trouble creating a session.")
-    return
-  }
+  await limiter.run(async () => {
+    let session
+    try {
+      session = await ensureSession(channelId)
+    } catch {
+      await postChannelMessage(channelId, "Sorry, I had trouble creating a session.")
+      return
+    }
 
-  const result = await opencode.client.session.prompt({
-    path: { id: session.sessionId },
-    body: { parts: [{ type: "text", text: trimmed }] },
+    const result = await opencode.client.session.prompt({
+      path: { id: session.sessionId },
+      body: { parts: [{ type: "text", text: trimmed }] },
+    })
+
+    if (result.error) {
+      await postChannelMessage(channelId, "Sorry, I had trouble processing your message.")
+      return
+    }
+
+    const response = result.data
+    const responseText =
+      response?.info?.content ||
+      response?.parts
+        ?.filter((p) => p.type === "text")
+        .map((p) => p.text)
+        .join("\n") ||
+      "I received your message but didn't have a response."
+
+    await postChannelMessage(channelId, responseText)
   })
-
-  if (result.error) {
-    await postChannelMessage(channelId, "Sorry, I had trouble processing your message.")
-    return
-  }
-
-  const response = result.data
-  const responseText =
-    response?.info?.content ||
-    response?.parts
-      ?.filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n") ||
-    "I received your message but didn't have a response."
-
-  await postChannelMessage(channelId, responseText)
 }
 
 async function handleToolUpdate(part) {
@@ -154,4 +175,3 @@ client.once("ready", () => {
 })
 
 await client.login(discordToken)
-

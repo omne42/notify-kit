@@ -18,18 +18,17 @@ cargo test --workspace
 ## 目录结构
 
 - `crates/notify-kit/`：库实现
-- `docs/`：GitBook 文档（本目录）
+- `docs/`：mdBook 文档（本目录）
 - `scripts/gate.sh`：格式化/编译门禁
 
 ## 文档维护
 
 - 改动文档：直接编辑 `docs/*.md`
 - 目录结构：编辑 `docs/SUMMARY.md`
-- 如果你使用 GitBook：把 Book root 指向 `docs/`
 
 ## 本地预览（mdBook）
 
-本目录的结构兼容 mdBook（使用 `SUMMARY.md` 作为目录）。你可以用 mdBook 本地预览（含搜索）：
+本目录使用 `SUMMARY.md` 作为目录。你可以用 mdBook 本地预览（含搜索）：
 
 ```bash
 ./scripts/docs.sh serve

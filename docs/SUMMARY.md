@@ -4,6 +4,8 @@
   * [核心概念](concepts.md)
   * [设计说明](design.md)
   * [安全](security.md)
+  * [llms.txt](llms.md)
+  * [Changelog](changelog.md)
 * [Getting Started](getting-started.md)
   * [Examples / Recipes](examples.md)
 * [Guides](integration.md)

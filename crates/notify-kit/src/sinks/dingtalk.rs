@@ -3,9 +3,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::Event;
 use crate::sinks::crypto::hmac_sha256_base64;
 use crate::sinks::http::{
-    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
-    read_json_body_limited, redact_url, redact_url_str, sanitize_reqwest_error,
-    validate_url_path_prefix, validate_url_resolves_to_public_ip_async,
+    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, build_http_client_pinned_async,
+    parse_and_validate_https_url, read_json_body_limited, redact_url, redact_url_str,
+    sanitize_reqwest_error, validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
@@ -74,6 +74,7 @@ pub struct DingTalkWebhookSink {
     webhook_url: reqwest::Url,
     secret: Option<String>,
     client: reqwest::Client,
+    timeout: Duration,
     max_chars: usize,
     enforce_public_ip: bool,
 }
@@ -105,6 +106,7 @@ impl DingTalkWebhookSink {
             webhook_url,
             secret: config.secret,
             client,
+            timeout: config.timeout,
             max_chars: config.max_chars,
             enforce_public_ip: config.enforce_public_ip,
         })
@@ -148,13 +150,14 @@ impl Sink for DingTalkWebhookSink {
     fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move {
             let url = self.webhook_url_with_signature()?;
-            if self.enforce_public_ip {
-                validate_url_resolves_to_public_ip_async(url.clone()).await?;
-            }
+            let client = if self.enforce_public_ip {
+                build_http_client_pinned_async(self.timeout, url.clone()).await?
+            } else {
+                self.client.clone()
+            };
             let payload = Self::build_payload(event, self.max_chars);
 
-            let resp = self
-                .client
+            let resp = client
                 .post(url)
                 .json(&payload)
                 .send()

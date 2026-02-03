@@ -1,12 +1,16 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::time::Duration;
 
 pub(crate) const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024;
 
-pub(crate) fn build_http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
+fn build_http_client_builder(timeout: Duration) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none())
+}
+
+pub(crate) fn build_http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
+    build_http_client_builder(timeout)
         .build()
         .map_err(|err| anyhow::anyhow!("build reqwest client: {err}"))
 }
@@ -93,6 +97,11 @@ pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> anyh
 }
 
 pub(crate) fn validate_url_resolves_to_public_ip(url: &reqwest::Url) -> anyhow::Result<()> {
+    resolve_url_to_public_addrs(url)?;
+    Ok(())
+}
+
+fn resolve_url_to_public_addrs(url: &reqwest::Url) -> anyhow::Result<Vec<SocketAddr>> {
     let Some(host) = url.host_str() else {
         return Err(anyhow::anyhow!("url must have a host"));
     };
@@ -101,11 +110,15 @@ pub(crate) fn validate_url_resolves_to_public_ip(url: &reqwest::Url) -> anyhow::
         .to_socket_addrs()
         .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
 
+    let mut out: Vec<SocketAddr> = Vec::new();
     let mut seen = 0usize;
     for addr in addrs {
         seen += 1;
         if !is_public_ip(addr.ip()) {
             return Err(anyhow::anyhow!("resolved ip is not allowed"));
+        }
+        if !out.contains(&addr) {
+            out.push(addr);
         }
     }
 
@@ -113,16 +126,28 @@ pub(crate) fn validate_url_resolves_to_public_ip(url: &reqwest::Url) -> anyhow::
         return Err(anyhow::anyhow!("dns lookup failed"));
     }
 
-    Ok(())
+    Ok(out)
 }
 
-pub(crate) async fn validate_url_resolves_to_public_ip_async(
+pub(crate) async fn build_http_client_pinned_async(
+    timeout: Duration,
     url: reqwest::Url,
-) -> anyhow::Result<()> {
-    tokio::task::spawn_blocking(move || validate_url_resolves_to_public_ip(&url))
-        .await
-        .map_err(|_| anyhow::anyhow!("dns lookup failed"))??;
-    Ok(())
+) -> anyhow::Result<reqwest::Client> {
+    let (host, addrs) = tokio::task::spawn_blocking(move || {
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("url must have a host"))?
+            .to_string();
+        let addrs = resolve_url_to_public_addrs(&url)?;
+        Ok::<_, anyhow::Error>((host, addrs))
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("dns lookup failed"))??;
+
+    build_http_client_builder(timeout)
+        .resolve_to_addrs(&host, &addrs)
+        .build()
+        .map_err(|err| anyhow::anyhow!("build reqwest client: {err}"))
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
