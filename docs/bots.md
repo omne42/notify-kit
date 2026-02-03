@@ -8,6 +8,7 @@
 - 飞书：`bots/opencode-feishu`（事件订阅 Webhook）
 - 钉钉：`bots/opencode-dingtalk-stream`（Stream Mode）
 - GitHub：`bots/opencode-github-action`（GitHub Actions：issue/pr 评论触发）
+- 企微：`bots/opencode-wecom`（企业微信自建应用回调）
 
 这些 bot 都遵循同一个最小模式：
 
@@ -23,6 +24,7 @@
 - `bots/opencode-feishu/README.md`
 - `bots/opencode-dingtalk-stream/README.md`
 - `bots/opencode-github-action/README.md`
+- `bots/opencode-wecom/README.md`
 
 ## 重要说明
 

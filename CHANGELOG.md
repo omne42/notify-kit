@@ -16,6 +16,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-feishu`：OpenCode 风格的飞书 bot 示例（chat → session）。
 - `bots/opencode-dingtalk-stream`：OpenCode 风格的钉钉 Stream Mode bot 示例（sessionWebhook → session）。
 - `bots/opencode-github-action`：OpenCode 风格的 GitHub Actions 评论 bot 示例（Issue/PR comment → session）。
+- `bots/opencode-wecom`：OpenCode 风格的企业微信（WeCom）回调 bot 示例（消息回调 → session）。
 - Docs: 刷新 `docs/README.md`/`docs/concepts.md` 的内置 sinks 列表；`.gitignore` 忽略 `node_modules/`。
 - Docs: 新增 mdBook 本地预览（含搜索）（`docs/book.toml` + `./scripts/docs.sh`）。
 - Docs: 新增 `llms.txt` 聚合文档（`./scripts/build-llms-txt.sh` 生成）。

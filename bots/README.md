@@ -27,3 +27,9 @@ OpenCode 风格的钉钉 Stream Mode bot：把会话（sessionWebhook）映射�
 OpenCode 风格的 GitHub Actions 评论 bot 示例：把 Issue/PR 评论桥接到 OpenCode session，并把回复回贴到 GitHub。
 
 见：`bots/opencode-github-action/README.md`
+
+## opencode-wecom
+
+OpenCode 风格的企业微信（WeCom）回调 bot 示例：通过“自建应用”的回调接收消息，桥接到 OpenCode session，并把回复发回企业微信。
+
+见：`bots/opencode-wecom/README.md`
