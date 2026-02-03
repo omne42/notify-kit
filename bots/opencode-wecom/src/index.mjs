@@ -25,6 +25,17 @@ function sha1Hex(value) {
   return crypto.createHash("sha1").update(String(value)).digest("hex")
 }
 
+function timingSafeEqualString(a, b) {
+  const left = Buffer.from(String(a || ""), "utf-8")
+  const right = Buffer.from(String(b || ""), "utf-8")
+  if (left.length === 0 && right.length === 0) return true
+  if (left.length !== right.length) {
+    if (right.length > 0) crypto.timingSafeEqual(right, right)
+    return false
+  }
+  return crypto.timingSafeEqual(left, right)
+}
+
 function computeSignature(token, timestamp, nonce, encrypted) {
   const items = [token, timestamp, nonce, encrypted].map((v) => String(v || ""))
   items.sort()
@@ -288,14 +299,34 @@ function parseWeComPlainXml(plainXmlText) {
 function verifySignatureOrThrow({ signature, timestamp, nonce, encrypted }) {
   const token = process.env.WECOM_TOKEN
   const expected = computeSignature(token, timestamp, nonce, encrypted)
-  if (String(signature || "") !== expected) {
+  if (!timingSafeEqualString(signature, expected)) {
     throw new Error("invalid msg_signature")
   }
 }
 
 const REPLAY_WINDOW_SECONDS = 5 * 60
 const REPLAY_CACHE_TTL_MS = 10 * 60 * 1000
+const REPLAY_CACHE_MAX_ENTRIES = 10_000
+const REPLAY_CLEANUP_INTERVAL_MS = 30 * 1000
 const replayCache = new Map()
+let replayLastCleanupMs = 0
+
+function cleanupReplayCache(now) {
+  if (now - replayLastCleanupMs < REPLAY_CLEANUP_INTERVAL_MS) return
+  replayLastCleanupMs = now
+
+  // Entries are inserted with a fixed TTL; insertion order approximates expiration order.
+  for (const [k, exp] of replayCache.entries()) {
+    if (exp > now) break
+    replayCache.delete(k)
+  }
+
+  while (replayCache.size > REPLAY_CACHE_MAX_ENTRIES) {
+    const oldest = replayCache.keys().next().value
+    if (oldest === undefined) break
+    replayCache.delete(oldest)
+  }
+}
 
 function isFreshTimestamp(timestamp) {
   const ts = Number.parseInt(String(timestamp || ""), 10)
@@ -304,20 +335,22 @@ function isFreshTimestamp(timestamp) {
   return Math.abs(now - ts) <= REPLAY_WINDOW_SECONDS
 }
 
-function checkAndRememberReplay(signature, timestamp, nonce) {
-  const key = `${timestamp}:${nonce}:${signature}`
+function checkAndRememberReplay(timestamp, nonce) {
+  const key = `${timestamp}:${nonce}`
   const now = Date.now()
 
-  // Cleanup expired entries (best-effort).
-  for (const [k, exp] of replayCache.entries()) {
-    if (exp <= now) replayCache.delete(k)
-  }
+  cleanupReplayCache(now)
 
   if (replayCache.has(key)) {
     return false
   }
 
   replayCache.set(key, now + REPLAY_CACHE_TTL_MS)
+  while (replayCache.size > REPLAY_CACHE_MAX_ENTRIES) {
+    const oldest = replayCache.keys().next().value
+    if (oldest === undefined) break
+    replayCache.delete(oldest)
+  }
   return true
 }
 
@@ -382,8 +415,8 @@ const server = http.createServer(async (req, res) => {
 
         if (!signature || !timestamp || !nonce) return
         if (!isFreshTimestamp(timestamp)) return
-        if (!checkAndRememberReplay(signature, timestamp, nonce)) return
         verifySignatureOrThrow({ signature, timestamp, nonce, encrypted })
+        if (!checkAndRememberReplay(timestamp, nonce)) return
 
         const { xmlText, receiver } = decryptWeCom(encrypted, process.env.WECOM_ENCODING_AES_KEY)
         assertReceiverOrThrow(receiver)

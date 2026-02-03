@@ -61,24 +61,45 @@ impl SoundSink {
             .map_err(|err| anyhow::anyhow!("spawn sound command {program}: {err}"))?;
 
         let program = program.to_string();
-        std::thread::spawn(move || match child.wait() {
-            Ok(status) if status.success() => {}
-            Ok(status) => {
-                tracing::warn!(
-                    sink = "sound",
-                    program = %program,
-                    status = ?status,
-                    "sound command exited non-zero"
-                );
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn_blocking(move || match child.wait() {
+                Ok(status) if status.success() => {}
+                Ok(status) => {
+                    tracing::warn!(
+                        sink = "sound",
+                        program = %program,
+                        status = ?status,
+                        "sound command exited non-zero"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        sink = "sound",
+                        program = %program,
+                        "wait sound command failed: {err}"
+                    );
+                }
+            });
+        } else {
+            match child.wait() {
+                Ok(status) if status.success() => {}
+                Ok(status) => {
+                    tracing::warn!(
+                        sink = "sound",
+                        program = %program,
+                        status = ?status,
+                        "sound command exited non-zero"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        sink = "sound",
+                        program = %program,
+                        "wait sound command failed: {err}"
+                    );
+                }
             }
-            Err(err) => {
-                tracing::warn!(
-                    sink = "sound",
-                    program = %program,
-                    "wait sound command failed: {err}"
-                );
-            }
-        });
+        }
         Ok(())
     }
 }

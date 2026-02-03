@@ -126,6 +126,13 @@ async function run() {
       },
     })
 
+    if (result.error) {
+      throw new Error(result.error.message || "opencode prompt failed")
+    }
+    if (!result.data) {
+      throw new Error("opencode prompt failed")
+    }
+
     const responseText = buildResponseText(result.data)
 
     const body = truncateForGitHub([url ? `OpenCode session: ${url}` : null, responseText].filter(Boolean).join("\n\n"))
@@ -191,6 +198,13 @@ async function run() {
         ],
       },
     })
+
+    if (result.error) {
+      throw new Error(result.error.message || "opencode prompt failed")
+    }
+    if (!result.data) {
+      throw new Error("opencode prompt failed")
+    }
 
     const responseText = buildResponseText(result.data)
 

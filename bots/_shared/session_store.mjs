@@ -39,6 +39,29 @@ async function atomicWriteUtf8(filePath, content, { root = null, rootReal = null
 }
 
 let exitHooksInstalled = false
+const exitHookFlushers = new Set()
+
+function installGlobalExitHooks() {
+  if (exitHooksInstalled) return
+  exitHooksInstalled = true
+
+  const flushAll = async () => {
+    const tasks = [...exitHookFlushers].map((fn) => fn())
+    await Promise.allSettled(tasks)
+  }
+
+  process.on("beforeExit", () => {
+    void flushAll()
+  })
+  process.on("SIGINT", async () => {
+    await flushAll()
+    process.exit(0)
+  })
+  process.on("SIGTERM", async () => {
+    await flushAll()
+    process.exit(0)
+  })
+}
 
 function safeRealpathSync(p) {
   try {
@@ -121,6 +144,7 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
   let flushTimer = null
   let pending = Promise.resolve()
   let flushErrorReported = false
+  let exitHooksRegistered = false
 
   function reportFlushError(err) {
     logError("session store flush failed", err)
@@ -173,19 +197,12 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
 
   function installExitHooks() {
     if (!storePath) return
-    if (exitHooksInstalled) return
-    exitHooksInstalled = true
 
-    const flush = () => flushNow().catch((err) => reportFlushError(err))
-    process.on("beforeExit", flush)
-    process.on("SIGINT", async () => {
-      await flush()
-      process.exit(0)
-    })
-    process.on("SIGTERM", async () => {
-      await flush()
-      process.exit(0)
-    })
+    if (!exitHooksRegistered) {
+      exitHooksRegistered = true
+      exitHookFlushers.add(() => flushNow().catch((err) => reportFlushError(err)))
+    }
+    installGlobalExitHooks()
   }
 
   return {
