@@ -40,6 +40,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
 - Docs: add GitBook-style documentation under `docs/` and link from README.
+- Dev: 在提交门禁中增加 bot 示例的 Node.js 语法校验（不要求安装依赖）。
 
 ### Fixed
 - `SoundSink`：外部命令会被回收（避免僵尸进程累积）。
@@ -50,6 +51,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `serverchan` sink：错误信息不再回显第三方返回的 message（保持低敏感）。
 - `bots/opencode-feishu`：修正 Feishu SDK 的 ESM 导入与事件名（`im.message.receive_v1`），并启用 callback challenge 自动处理。
 - `bots/opencode-github-action`：修正示例安装命令为 `npm install`（仓库未提供 lockfile，避免 `npm ci` 失败）。
+- `bots/opencode-wecom`：回调解密后校验 receiver（corp id），并加强 PKCS7 padding 校验。
 
 ## [0.1.0] - 2026-01-31
 

@@ -46,6 +46,9 @@ function pkcs7Unpad(buf) {
   if (!buf || buf.length === 0) throw new Error("invalid pkcs7 padding")
   const pad = buf[buf.length - 1]
   if (pad < 1 || pad > 32) throw new Error("invalid pkcs7 padding length")
+  for (let i = 1; i <= pad; i += 1) {
+    if (buf[buf.length - i] !== pad) throw new Error("invalid pkcs7 padding")
+  }
   return buf.subarray(0, buf.length - pad)
 }
 
@@ -67,6 +70,14 @@ function decryptWeCom(encryptedBase64, encodingAesKey) {
   const receiver = plain.subarray(msgEnd).toString("utf-8").replace(/\0+$/u, "")
 
   return { xmlText, receiver }
+}
+
+function assertReceiverOrThrow(receiver) {
+  const expected = String(process.env.WECOM_CORP_ID || "").trim()
+  const actual = String(receiver || "").trim()
+  if (!expected || !actual || expected !== actual) {
+    throw new Error("invalid receiver corp id")
+  }
 }
 
 async function readRequestBody(req, { limitBytes = 1024 * 1024 } = {}) {
@@ -311,7 +322,8 @@ const server = http.createServer(async (req, res) => {
 
     try {
       verifySignatureOrThrow({ signature, timestamp, nonce, encrypted: echostr })
-      const { xmlText } = decryptWeCom(echostr, process.env.WECOM_ENCODING_AES_KEY)
+      const { xmlText, receiver } = decryptWeCom(echostr, process.env.WECOM_ENCODING_AES_KEY)
+      assertReceiverOrThrow(receiver)
       sendTextResponse(res, 200, xmlText)
     } catch (err) {
       console.error("wecom verify failed:", err?.message || err)
@@ -345,7 +357,8 @@ const server = http.createServer(async (req, res) => {
         if (!signature || !timestamp || !nonce) return
         verifySignatureOrThrow({ signature, timestamp, nonce, encrypted })
 
-        const { xmlText } = decryptWeCom(encrypted, process.env.WECOM_ENCODING_AES_KEY)
+        const { xmlText, receiver } = decryptWeCom(encrypted, process.env.WECOM_ENCODING_AES_KEY)
+        assertReceiverOrThrow(receiver)
         const msg = parseWeComPlainXml(xmlText)
 
         const userId = msg.fromUserName
@@ -374,4 +387,3 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, () => {
   console.log(`⚡️ WeCom bot is listening on :${port} (/webhook/wecom)`)
 })
-

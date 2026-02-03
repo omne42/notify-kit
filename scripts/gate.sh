@@ -73,3 +73,19 @@ EOF
   )
 fi
 
+# Optional: validate example bots syntax without installing deps.
+if command -v node >/dev/null 2>&1 && [[ -d "$repo_root/bots" ]]; then
+  bot_entrypoints=()
+  while IFS= read -r f; do
+    bot_entrypoints+=("$f")
+  done < <(
+    find "$repo_root/bots" -maxdepth 3 -type f \( -path "*/src/index.mjs" -o -path "*/src/index.js" \) -print 2>/dev/null
+  )
+
+  if [[ "${#bot_entrypoints[@]}" -gt 0 ]]; then
+    echo "gate: node (bot syntax check)" >&2
+    for f in "${bot_entrypoints[@]}"; do
+      node --check "$f"
+    done
+  fi
+fi
