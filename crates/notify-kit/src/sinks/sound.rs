@@ -46,6 +46,28 @@ impl SoundSink {
     }
 
     #[cfg(feature = "sound-command")]
+    fn wait_sound_command(mut child: std::process::Child, program: String) {
+        match child.wait() {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                tracing::warn!(
+                    sink = "sound",
+                    program = %program,
+                    status = ?status,
+                    "sound command exited non-zero"
+                );
+            }
+            Err(err) => {
+                tracing::warn!(
+                    sink = "sound",
+                    program = %program,
+                    "wait sound command failed: {err}"
+                );
+            }
+        }
+    }
+
+    #[cfg(feature = "sound-command")]
     fn send_command(command_argv: &[String]) -> anyhow::Result<()> {
         let (program, args) = command_argv
             .split_first()
@@ -62,43 +84,9 @@ impl SoundSink {
 
         let program = program.to_string();
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn_blocking(move || match child.wait() {
-                Ok(status) if status.success() => {}
-                Ok(status) => {
-                    tracing::warn!(
-                        sink = "sound",
-                        program = %program,
-                        status = ?status,
-                        "sound command exited non-zero"
-                    );
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        sink = "sound",
-                        program = %program,
-                        "wait sound command failed: {err}"
-                    );
-                }
-            });
+            handle.spawn_blocking(move || Self::wait_sound_command(child, program));
         } else {
-            match child.wait() {
-                Ok(status) if status.success() => {}
-                Ok(status) => {
-                    tracing::warn!(
-                        sink = "sound",
-                        program = %program,
-                        status = ?status,
-                        "sound command exited non-zero"
-                    );
-                }
-                Err(err) => {
-                    tracing::warn!(
-                        sink = "sound",
-                        program = %program,
-                        "wait sound command failed: {err}"
-                    );
-                }
-            }
+            Self::wait_sound_command(child, program);
         }
         Ok(())
     }

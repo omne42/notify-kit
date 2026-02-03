@@ -25,15 +25,19 @@ function sha1Hex(value) {
   return crypto.createHash("sha1").update(String(value)).digest("hex")
 }
 
-function timingSafeEqualString(a, b) {
-  const left = Buffer.from(String(a || ""), "utf-8")
-  const right = Buffer.from(String(b || ""), "utf-8")
-  if (left.length === 0 && right.length === 0) return true
-  if (left.length !== right.length) {
-    if (right.length > 0) crypto.timingSafeEqual(right, right)
-    return false
-  }
-  return crypto.timingSafeEqual(left, right)
+function parseSha1HexOrNull(value) {
+  const s = String(value || "").trim()
+  if (!/^[0-9a-f]{40}$/iu.test(s)) return null
+  return Buffer.from(s, "hex")
+}
+
+function timingSafeEqualSha1Hex(actualHex, expectedHex) {
+  const expected = parseSha1HexOrNull(expectedHex)
+  const actual = parseSha1HexOrNull(actualHex)
+  const expectedBuf = expected || Buffer.alloc(20, 0)
+  const actualBuf = actual || Buffer.alloc(20, 0)
+  const eq = crypto.timingSafeEqual(actualBuf, expectedBuf)
+  return Boolean(actual && expected && eq)
 }
 
 function computeSignature(token, timestamp, nonce, encrypted) {
@@ -299,7 +303,7 @@ function parseWeComPlainXml(plainXmlText) {
 function verifySignatureOrThrow({ signature, timestamp, nonce, encrypted }) {
   const token = process.env.WECOM_TOKEN
   const expected = computeSignature(token, timestamp, nonce, encrypted)
-  if (!timingSafeEqualString(signature, expected)) {
+  if (!timingSafeEqualSha1Hex(signature, expected)) {
     throw new Error("invalid msg_signature")
   }
 }

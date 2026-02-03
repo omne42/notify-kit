@@ -15,6 +15,7 @@ const DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES: usize = 256;
 const DEFAULT_SYNC_DNS_POSITIVE_CACHE_TTL: Duration = DEFAULT_PINNED_CLIENT_TTL;
 const DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(5);
 const DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES: usize = 256;
+const DEFAULT_MAX_SYNC_DNS_INFLIGHT_HOSTS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PinnedClientKey {
@@ -98,6 +99,16 @@ impl InflightResolve {
         let mut guard = self.result.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some(result);
         self.cv.notify_all();
+    }
+
+    fn set_result_if_empty(&self, result: Result<Arc<Vec<SocketAddr>>, String>) -> bool {
+        let mut guard = self.result.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_some() {
+            return false;
+        }
+        *guard = Some(result);
+        self.cv.notify_all();
+        true
     }
 
     fn wait(&self, timeout: Duration) -> Option<Result<Arc<Vec<SocketAddr>>, String>> {
@@ -349,6 +360,9 @@ fn resolve_url_to_public_addrs_with_timeout(
         if let Some(existing) = inflight.get(&host) {
             (existing.clone(), false)
         } else {
+            if inflight.len() >= DEFAULT_MAX_SYNC_DNS_INFLIGHT_HOSTS {
+                return Err(anyhow::anyhow!("dns lookup failed"));
+            }
             let entry = Arc::new(InflightResolve::new());
             inflight.insert(host.clone(), entry.clone());
             (entry, true)
@@ -490,7 +504,24 @@ fn resolve_url_to_public_addrs_with_timeout(
     match inflight.wait(remaining) {
         Some(Ok(addrs)) => Ok((*addrs).clone()),
         Some(Err(msg)) => Err(anyhow::anyhow!("{msg}")),
-        None => Err(anyhow::anyhow!("dns lookup timeout")),
+        None => {
+            let msg = "dns lookup timeout".to_string();
+            inflight.set_result_if_empty(Err(msg.clone()));
+            let now = Instant::now();
+            {
+                let mut cache = sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
+                cache.retain(|_, v| v.expires_at > now);
+                cache.insert(
+                    host.clone(),
+                    CachedDnsResult {
+                        result: Err(msg),
+                        expires_at: now + DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL,
+                    },
+                );
+                cap_hashmap_entries(&mut cache, DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES, &host);
+            }
+            Err(anyhow::anyhow!("dns lookup timeout"))
+        }
     }
 }
 
@@ -520,7 +551,7 @@ fn resolve_host_to_public_addrs(host: &str) -> anyhow::Result<Vec<SocketAddr>> {
 
 pub(crate) async fn build_http_client_pinned_async(
     timeout: Duration,
-    url: reqwest::Url,
+    url: &reqwest::Url,
 ) -> anyhow::Result<reqwest::Client> {
     let host = url
         .host_str()
@@ -532,11 +563,14 @@ pub(crate) async fn build_http_client_pinned_async(
         .await
         .map_err(|_| anyhow::anyhow!("dns lookup timeout"))?
         .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
-    let addrs = tokio::task::spawn_blocking(move || {
-        resolve_url_to_public_addrs_with_timeout(&url, dns_timeout)
-    })
-    .await
-    .map_err(|_| anyhow::anyhow!("dns lookup failed"))??;
+    let lookup = tokio::task::spawn_blocking({
+        let host = host.clone();
+        move || resolve_host_to_public_addrs(&host)
+    });
+    let addrs = tokio::time::timeout(dns_timeout, lookup)
+        .await
+        .map_err(|_| anyhow::anyhow!("dns lookup timeout"))?
+        .map_err(|_| anyhow::anyhow!("dns lookup failed"))??;
 
     build_http_client_builder(timeout)
         .resolve_to_addrs(&host, &addrs)
@@ -574,7 +608,7 @@ pub(crate) async fn select_http_client(
         }
     }
 
-    let client = build_http_client_pinned_async(timeout, url.clone()).await?;
+    let client = build_http_client_pinned_async(timeout, url).await?;
 
     {
         let mut cache = pinned_client_cache().write().await;

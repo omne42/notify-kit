@@ -145,6 +145,7 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
   let pending = Promise.resolve()
   let flushErrorReported = false
   let exitHooksRegistered = false
+  let exitHookFlusher = null
 
   function reportFlushError(err) {
     logError("session store flush failed", err)
@@ -200,9 +201,22 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
 
     if (!exitHooksRegistered) {
       exitHooksRegistered = true
-      exitHookFlushers.add(() => flushNow().catch((err) => reportFlushError(err)))
+      exitHookFlusher = () => flushNow().catch((err) => reportFlushError(err))
+      exitHookFlushers.add(exitHookFlusher)
     }
     installGlobalExitHooks()
+  }
+
+  function close() {
+    if (flushTimer) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+    if (exitHookFlusher) {
+      exitHookFlushers.delete(exitHookFlusher)
+      exitHookFlusher = null
+      exitHooksRegistered = false
+    }
   }
 
   return {
@@ -214,5 +228,6 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
     set,
     delete: del,
     installExitHooks,
+    close,
   }
 }
