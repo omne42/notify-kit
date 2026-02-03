@@ -77,15 +77,16 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-dingtalk-stream`：校验 `sessionWebhook` 为 https 且 host 属于钉钉域名（降低 SSRF 风险）。
 - `bots/opencode-wecom`：增加 timestamp 时间窗与 nonce 去重（降低重放风险）。
 - `bots/opencode-wecom`：签名比较使用 timingSafeEqual，并对 replay cache 增加容量上限（避免 DoS / 内存增长）。
+- `bots/opencode-wecom`：SHA1 hex 解析增加长度快速判断并用手写 hex 校验替代正则（避免超长输入触发正则扫描）。
 - Webhook/API sinks: DNS 公网 IP 校验增加超时与并发限制，避免阻塞/线程池耗尽，并对 pinned client 做短 TTL 缓存以减少重复解析。
-- Webhook/API sinks: DNS 公网 IP 校验在超时后不再长期占用并发 permit，并为失败/超时结果增加短 TTL 负缓存（避免 DNS hang 导致持续退化）。
+- Webhook/API sinks: DNS 公网 IP 校验：timeout 后将 permit 生命周期绑定到实际解析任务（防止持续 timeout 时产生无界 blocking 任务/线程），并在 timeout 路径上清理 inflight 条目避免 map 增长，同时为失败/超时结果增加短 TTL 负缓存。
 - `SlackWebhookSink` / `DiscordWebhookSink` / `GenericWebhookSink` / `BarkSink`：读取响应 body 失败时仍保留 HTTP status 错误上下文。
 - `BarkSink`：当响应看起来像 JSON 时，即使 Content-Type 缺失/错误也会尝试解析。
 - `bots/opencode-telegram`：支持 `OPENCODE_SESSION_STORE_PATH` 以持久化 chat → session 映射（可选）。
 - `bots/_shared/session_store`：`rootDir` 校验加强（防 symlink 逃逸；flush 前二次校验 realpath）。
 - `bots/_shared/session_store`：flush 失败在非 verbose 下也会输出一次性 warning（避免静默失败）。
 - `bots/_shared/session_store`：退出 hook 支持多个 store 实例（避免只 flush 第一个）。
-- `bots/_shared/session_store`：新增 `close()` 用于解除 exit hook 注册（避免短生命周期 store 累积 flush 回调）。
+- `bots/_shared/session_store`：`close()` 会取消 debounce 并触发一次 flush（返回 Promise），同时解除 exit hook 注册（避免短生命周期 store 累积 flush 回调）。
 - `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加超时 + 并发限制（避免 DNS 卡死导致初始化阻塞/线程堆积）。
 - `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加 inflight 去重 + TTL 缓存，并对 pinned client cache 增加容量上限（避免重复/无界增长）。
 - `bots/_shared/log`：verbose 模式输出错误 stack（更易排障）。

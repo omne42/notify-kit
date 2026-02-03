@@ -27,7 +27,14 @@ function sha1Hex(value) {
 
 function parseSha1HexOrNull(value) {
   const s = String(value || "").trim()
-  if (!/^[0-9a-f]{40}$/iu.test(s)) return null
+  if (s.length !== 40) return null
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s.charCodeAt(i)
+    const isDigit = c >= 48 && c <= 57
+    const isLower = c >= 97 && c <= 102
+    const isUpper = c >= 65 && c <= 70
+    if (!(isDigit || isLower || isUpper)) return null
+  }
   return Buffer.from(s, "hex")
 }
 

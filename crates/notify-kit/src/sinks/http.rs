@@ -369,7 +369,6 @@ fn resolve_url_to_public_addrs_with_timeout(
         }
     };
 
-    let mut _leader_permit: Option<SyncPermit> = None;
     if leader {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let Some(permit) = sync_dns_lookup_semaphore()
@@ -401,13 +400,12 @@ fn resolve_url_to_public_addrs_with_timeout(
             return Err(anyhow::anyhow!("dns lookup timeout"));
         };
 
-        _leader_permit = Some(permit);
-
         let inflight_entry = inflight.clone();
         let host_key = host.clone();
         let spawn_res = std::thread::Builder::new()
             .name("notify-kit-dns".to_string())
             .spawn(move || {
+                let _permit = permit;
                 let res = resolve_host_to_public_addrs(&host_key);
                 match res {
                     Ok(addrs) => {
@@ -506,19 +504,29 @@ fn resolve_url_to_public_addrs_with_timeout(
         Some(Err(msg)) => Err(anyhow::anyhow!("{msg}")),
         None => {
             let msg = "dns lookup timeout".to_string();
-            inflight.set_result_if_empty(Err(msg.clone()));
-            let now = Instant::now();
-            {
-                let mut cache = sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
-                cache.retain(|_, v| v.expires_at > now);
-                cache.insert(
-                    host.clone(),
-                    CachedDnsResult {
-                        result: Err(msg),
-                        expires_at: now + DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL,
-                    },
-                );
-                cap_hashmap_entries(&mut cache, DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES, &host);
+            if inflight.set_result_if_empty(Err(msg.clone())) {
+                let now = Instant::now();
+                {
+                    let mut cache = sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
+                    cache.retain(|_, v| v.expires_at > now);
+                    cache.insert(
+                        host.clone(),
+                        CachedDnsResult {
+                            result: Err(msg),
+                            expires_at: now + DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL,
+                        },
+                    );
+                    cap_hashmap_entries(&mut cache, DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES, &host);
+                }
+                let mut inflight_map = sync_dns_inflight()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if inflight_map
+                    .get(&host)
+                    .is_some_and(|current| Arc::ptr_eq(current, &inflight))
+                {
+                    inflight_map.remove(&host);
+                }
             }
             Err(anyhow::anyhow!("dns lookup timeout"))
         }
@@ -559,13 +567,16 @@ pub(crate) async fn build_http_client_pinned_async(
         .to_string();
 
     let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
-    let _permit = tokio::time::timeout(dns_timeout, dns_lookup_semaphore().clone().acquire_owned())
+    let permit = tokio::time::timeout(dns_timeout, dns_lookup_semaphore().clone().acquire_owned())
         .await
         .map_err(|_| anyhow::anyhow!("dns lookup timeout"))?
         .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
     let lookup = tokio::task::spawn_blocking({
         let host = host.clone();
-        move || resolve_host_to_public_addrs(&host)
+        move || {
+            let _permit = permit;
+            resolve_host_to_public_addrs(&host)
+        }
     });
     let addrs = tokio::time::timeout(dns_timeout, lookup)
         .await

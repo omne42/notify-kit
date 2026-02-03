@@ -211,12 +211,16 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
     if (flushTimer) {
       clearTimeout(flushTimer)
       flushTimer = null
+      pending = pending.then(flushNow).catch((err) => {
+        reportFlushError(err)
+      })
     }
     if (exitHookFlusher) {
       exitHookFlushers.delete(exitHookFlusher)
       exitHookFlusher = null
       exitHooksRegistered = false
     }
+    return pending
   }
 
   return {
