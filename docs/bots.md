@@ -7,6 +7,7 @@
 - Slack：`bots/opencode-slack`（Socket Mode）
 - 飞书：`bots/opencode-feishu`（事件订阅 Webhook）
 - 钉钉：`bots/opencode-dingtalk-stream`（Stream Mode）
+- GitHub：`bots/opencode-github-action`（GitHub Actions：issue/pr 评论触发）
 
 这些 bot 都遵循同一个最小模式：
 
@@ -21,9 +22,9 @@
 - `bots/opencode-slack/README.md`
 - `bots/opencode-feishu/README.md`
 - `bots/opencode-dingtalk-stream/README.md`
+- `bots/opencode-github-action/README.md`
 
 ## 重要说明
 
 - 这些示例默认只做内存映射（重启会丢失映射）；生产环境应把映射持久化（KV/DB）。
 - 对于飞书/钉钉/企微等平台：**“群机器人 webhook”通常只能发消息**，想做“交互式 bot”需要使用事件订阅/Stream/回调机制。
-

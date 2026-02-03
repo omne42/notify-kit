@@ -21,3 +21,9 @@ OpenCode 风格的飞书（Lark/Feishu）事件订阅 bot：把群聊映射为�
 OpenCode 风格的钉钉 Stream Mode bot：把会话（sessionWebhook）映射为会话，并在群里输出会话分享链接与工具执行更新。
 
 见：`bots/opencode-dingtalk-stream/README.md`
+
+## opencode-github-action
+
+OpenCode 风格的 GitHub Actions 评论 bot 示例：把 Issue/PR 评论桥接到 OpenCode session，并把回复回贴到 GitHub。
+
+见：`bots/opencode-github-action/README.md`
