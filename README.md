@@ -25,7 +25,9 @@
 ## 文档
 
 - GitBook：`docs/README.md`（目录：`docs/SUMMARY.md`）
+- 本地预览（含搜索）：`./scripts/docs.sh serve`（需要先 `cargo install mdbook`）
 - Rustdoc：`cargo doc -p notify-kit --open`
+- LLM 友好入口：`llms.txt`（由 `./scripts/build-llms-txt.sh` 生成）
 
 ## Bots（上层集成示例）
 

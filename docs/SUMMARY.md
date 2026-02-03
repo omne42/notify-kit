@@ -22,6 +22,7 @@
   * [WeComWebhookSink](sinks/wecom.md)
   * [自定义 Sink](sinks/custom.md)
 * [集成与配置](integration.md)
+* [Bots（交互式集成示例）](bots.md)
 * [安全](security.md)
 * [FAQ / 排错](faq.md)
 * [开发](development.md)

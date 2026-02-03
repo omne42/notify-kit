@@ -50,6 +50,7 @@
 - 概念： [核心概念](concepts.md)
 - API： [Hub](api/hub.md)、[Event](api/event.md)、[Sink](api/sink.md)
 - 内置 sinks： [内置 Sinks](sinks/README.md)
+- Bots： [Bots（交互式集成示例）](bots.md)
 - 集成： [集成与配置](integration.md)
 - 安全： [安全](security.md)
 

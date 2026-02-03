@@ -16,6 +16,9 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-feishu`：OpenCode 风格的飞书 bot 示例（chat → session）。
 - `bots/opencode-dingtalk-stream`：OpenCode 风格的钉钉 Stream Mode bot 示例（sessionWebhook → session）。
 - Docs: 刷新 `docs/README.md`/`docs/concepts.md` 的内置 sinks 列表；`.gitignore` 忽略 `node_modules/`。
+- Docs: 新增 mdBook 本地预览（含搜索）（`docs/book.toml` + `./scripts/docs.sh`）。
+- Docs: 新增 `llms.txt` 聚合文档（`./scripts/build-llms-txt.sh` 生成）。
+- Docs: 新增 `docs/bots.md`，集中说明 OpenCode 风格 bot 示例。
 - New sinks:
   - `SlackWebhookSink`：Slack Incoming Webhook（text）。
   - `DiscordWebhookSink`：Discord webhook（text）。
