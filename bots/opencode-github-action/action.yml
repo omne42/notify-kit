@@ -6,9 +6,8 @@ runs:
     - name: Install deps
       shell: bash
       working-directory: bots/opencode-github-action
-      run: npm ci
+      run: npm install
     - name: Run bot
       shell: bash
       working-directory: bots/opencode-github-action
       run: node ./src/index.mjs
-

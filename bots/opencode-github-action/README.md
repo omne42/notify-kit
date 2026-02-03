@@ -66,7 +66,7 @@ jobs:
           # OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           cd bots/opencode-github-action
-          npm ci
+          npm install
           npm start
 ```
 
@@ -74,4 +74,3 @@ jobs:
 
 - 这是“示例实现”：为了保持简单，默认每次触发都会创建新 session（不做持久化映射）。
 - PR review comment 事件会优先以 “reply” 的形式回复到对应 review comment。
-
