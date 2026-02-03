@@ -62,6 +62,7 @@ function decryptWeCom(encryptedBase64, encodingAesKey) {
   const msgLen = plain.readUInt32BE(16)
   const msgStart = 20
   const msgEnd = msgStart + msgLen
+  if (msgEnd > plain.length) throw new Error("invalid decrypted message")
   const xmlText = plain.subarray(msgStart, msgEnd).toString("utf-8")
   const receiver = plain.subarray(msgEnd).toString("utf-8").replace(/\0+$/u, "")
 

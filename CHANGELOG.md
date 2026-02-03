@@ -71,6 +71,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-feishu`：修正 Feishu SDK 的 ESM 导入与事件名（`im.message.receive_v1`），并启用 callback challenge 自动处理。
 - `bots/opencode-github-action`：修正示例安装命令为 `npm install`（仓库未提供 lockfile，避免 `npm ci` 失败）。
 - `bots/opencode-wecom`：回调解密后校验 receiver（corp id），并加强 PKCS7 padding 校验。
+- `bots/opencode-wecom`：校验解密后的 `msgLen` 边界，避免越界读取。
 - `bots/opencode-dingtalk-stream`：校验 `sessionWebhook` 为 https 且 host 属于钉钉域名（降低 SSRF 风险）。
 - `bots/opencode-wecom`：增加 timestamp 时间窗与 nonce 去重（降低重放风险）。
 - Webhook/API sinks: DNS 公网 IP 校验增加超时与并发限制，避免阻塞/线程池耗尽，并对 pinned client 做短 TTL 缓存以减少重复解析。
@@ -78,7 +79,9 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `BarkSink`：当响应看起来像 JSON 时，即使 Content-Type 缺失/错误也会尝试解析。
 - `bots/opencode-telegram`：支持 `OPENCODE_SESSION_STORE_PATH` 以持久化 chat → session 映射（可选）。
 - `bots/_shared/session_store`：`rootDir` 校验加强（防 symlink 逃逸；flush 前二次校验 realpath）。
+- `bots/_shared/session_store`：flush 失败在非 verbose 下也会输出一次性 warning（避免静默失败）。
 - `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加超时 + 并发限制（避免 DNS 卡死导致初始化阻塞/线程堆积）。
+- `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加 inflight 去重 + TTL 缓存，并对 pinned client cache 增加容量上限（避免重复/无界增长）。
 - `bots/_shared/log`：verbose 模式输出错误 stack（更易排障）。
 - Docs: 修复 `./scripts/docs.sh test` 偶发的重复 rmeta 导致的 snippet 编译失败。
 

@@ -10,6 +10,9 @@ pub(crate) const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024;
 const DEFAULT_DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 const DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT: usize = 32;
 const DEFAULT_PINNED_CLIENT_TTL: Duration = Duration::from_secs(60);
+const DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES: usize = 256;
+const DEFAULT_SYNC_DNS_CACHE_TTL: Duration = DEFAULT_PINNED_CLIENT_TTL;
+const DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PinnedClientKey {
@@ -23,10 +26,24 @@ struct CachedPinnedClient {
     expires_at: Instant,
 }
 
+#[derive(Clone)]
+struct CachedResolvedAddrs {
+    addrs: Arc<Vec<SocketAddr>>,
+    expires_at: Instant,
+}
+
+struct InflightResolve {
+    result: Mutex<Option<Result<Arc<Vec<SocketAddr>>, String>>>,
+    cv: Condvar,
+}
+
 static PINNED_CLIENT_CACHE: OnceLock<RwLock<HashMap<PinnedClientKey, CachedPinnedClient>>> =
     OnceLock::new();
 static DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 static SYNC_DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<SyncSemaphore>> = OnceLock::new();
+static SYNC_DNS_RESOLVED_CACHE: OnceLock<Mutex<HashMap<String, CachedResolvedAddrs>>> =
+    OnceLock::new();
+static SYNC_DNS_INFLIGHT: OnceLock<Mutex<HashMap<String, Arc<InflightResolve>>>> = OnceLock::new();
 
 fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinnedClient>> {
     PINNED_CLIENT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
@@ -34,6 +51,59 @@ fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinne
 
 fn dns_lookup_semaphore() -> &'static Arc<Semaphore> {
     DNS_LOOKUP_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT)))
+}
+
+fn sync_dns_resolved_cache() -> &'static Mutex<HashMap<String, CachedResolvedAddrs>> {
+    SYNC_DNS_RESOLVED_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn sync_dns_inflight() -> &'static Mutex<HashMap<String, Arc<InflightResolve>>> {
+    SYNC_DNS_INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+impl InflightResolve {
+    fn new() -> Self {
+        Self {
+            result: Mutex::new(None),
+            cv: Condvar::new(),
+        }
+    }
+
+    fn set_result(&self, result: Result<Arc<Vec<SocketAddr>>, String>) {
+        let mut guard = self.result.lock().unwrap_or_else(|e| e.into_inner());
+        *guard = Some(result);
+        self.cv.notify_all();
+    }
+
+    fn wait(&self, timeout: Duration) -> Option<Result<Arc<Vec<SocketAddr>>, String>> {
+        if timeout == Duration::ZERO {
+            return None;
+        }
+
+        let deadline = Instant::now() + timeout;
+        let mut guard = self.result.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if let Some(res) = guard.as_ref() {
+                return Some(res.clone());
+            }
+
+            let now = Instant::now();
+            if now >= deadline {
+                return None;
+            }
+
+            let remaining = deadline.duration_since(now);
+            let (next, wait) = self
+                .cv
+                .wait_timeout(guard, remaining)
+                .unwrap_or_else(|e| e.into_inner());
+            guard = next;
+
+            if wait.timed_out() {
+                return None;
+            }
+        }
+    }
 }
 
 struct SyncSemaphore {
@@ -237,32 +307,117 @@ fn resolve_url_to_public_addrs_with_timeout(
         return Err(anyhow::anyhow!("dns lookup timeout"));
     }
 
-    let deadline = Instant::now() + dns_timeout;
-    let permit = sync_dns_lookup_semaphore()
-        .clone()
-        .acquire_timeout(deadline.saturating_duration_since(Instant::now()))
-        .ok_or_else(|| anyhow::anyhow!("dns lookup timeout"))?;
+    let now = Instant::now();
+    let host = host.to_ascii_lowercase();
 
-    let host = host.to_string();
-    let (tx, rx) = std::sync::mpsc::channel::<anyhow::Result<Vec<SocketAddr>>>();
-    std::thread::spawn(move || {
-        let _permit = permit;
-        let _ = tx.send(resolve_host_to_public_addrs(&host));
-    });
+    {
+        let mut cache = sync_dns_resolved_cache()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        cache.retain(|_, v| v.expires_at > now);
+        if let Some(cached) = cache.get(&host) {
+            if cached.expires_at > now {
+                return Ok((*cached.addrs).clone());
+            }
+        }
+    }
+
+    let deadline = now + dns_timeout;
+
+    let (inflight, leader) = {
+        let mut inflight = sync_dns_inflight()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = inflight.get(&host) {
+            (existing.clone(), false)
+        } else {
+            let entry = Arc::new(InflightResolve::new());
+            inflight.insert(host.clone(), entry.clone());
+            (entry, true)
+        }
+    };
+
+    if leader {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let Some(permit) = sync_dns_lookup_semaphore()
+            .clone()
+            .acquire_timeout(remaining)
+        else {
+            inflight.set_result(Err("dns lookup timeout".to_string()));
+            let mut inflight_map = sync_dns_inflight()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if inflight_map
+                .get(&host)
+                .is_some_and(|current| Arc::ptr_eq(current, &inflight))
+            {
+                inflight_map.remove(&host);
+            }
+            return Err(anyhow::anyhow!("dns lookup timeout"));
+        };
+
+        let inflight_entry = inflight.clone();
+        let host_key = host.clone();
+        std::thread::spawn(move || {
+            let _permit = permit;
+            let res = resolve_host_to_public_addrs(&host_key);
+            match res {
+                Ok(addrs) => {
+                    let addrs = Arc::new(addrs);
+                    let now = Instant::now();
+
+                    {
+                        let mut cache = sync_dns_resolved_cache()
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        cache.retain(|_, v| v.expires_at > now);
+                        cache.insert(
+                            host_key.clone(),
+                            CachedResolvedAddrs {
+                                addrs: addrs.clone(),
+                                expires_at: now + DEFAULT_SYNC_DNS_CACHE_TTL,
+                            },
+                        );
+                        if cache.len() > DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES {
+                            let to_remove = cache.len() - DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES;
+                            let keys: Vec<String> = cache
+                                .keys()
+                                .filter(|k| *k != &host_key)
+                                .take(to_remove)
+                                .cloned()
+                                .collect();
+                            for k in keys {
+                                cache.remove(&k);
+                            }
+                        }
+                    }
+
+                    inflight_entry.set_result(Ok(addrs));
+                }
+                Err(err) => inflight_entry.set_result(Err(err.to_string())),
+            }
+
+            let mut inflight_map = sync_dns_inflight()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if inflight_map
+                .get(&host_key)
+                .is_some_and(|current| Arc::ptr_eq(current, &inflight_entry))
+            {
+                inflight_map.remove(&host_key);
+            }
+        });
+    }
 
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining == Duration::ZERO {
         return Err(anyhow::anyhow!("dns lookup timeout"));
     }
 
-    match rx.recv_timeout(remaining) {
-        Ok(res) => res,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            Err(anyhow::anyhow!("dns lookup timeout"))
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err(anyhow::anyhow!("dns lookup failed"))
-        }
+    match inflight.wait(remaining) {
+        Some(Ok(addrs)) => Ok((*addrs).clone()),
+        Some(Err(msg)) => Err(anyhow::anyhow!("{msg}")),
+        None => Err(anyhow::anyhow!("dns lookup timeout")),
     }
 }
 
@@ -345,6 +500,7 @@ pub(crate) async fn select_http_client(
         host: host.to_string(),
         timeout_ms,
     };
+    let key_for_eviction = key.clone();
 
     let now = Instant::now();
     {
@@ -368,6 +524,18 @@ pub(crate) async fn select_http_client(
                 expires_at: now + DEFAULT_PINNED_CLIENT_TTL,
             },
         );
+        if cache.len() > DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES {
+            let to_remove = cache.len() - DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES;
+            let keys: Vec<PinnedClientKey> = cache
+                .keys()
+                .filter(|k| *k != &key_for_eviction)
+                .take(to_remove)
+                .cloned()
+                .collect();
+            for key in keys {
+                cache.remove(&key);
+            }
+        }
     }
 
     Ok(client)

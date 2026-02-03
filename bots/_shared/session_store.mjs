@@ -3,7 +3,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import process from "node:process"
 
-import { ignoreError, logError } from "./log.mjs"
+import { ignoreError, isVerbose, logError } from "./log.mjs"
 
 async function safeReadJson(filePath) {
   try {
@@ -120,6 +120,17 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
 
   let flushTimer = null
   let pending = Promise.resolve()
+  let flushErrorReported = false
+
+  function reportFlushError(err) {
+    logError("session store flush failed", err)
+    if (isVerbose()) return
+    if (flushErrorReported) return
+    flushErrorReported = true
+    const msg = err?.message || String(err)
+    console.error("session store flush failed:", msg)
+    console.error("set OPENCODE_BOT_VERBOSE=1 for stack traces")
+  }
 
   async function load() {
     if (!storePath) return
@@ -145,7 +156,7 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
     flushTimer = setTimeout(() => {
       flushTimer = null
       pending = pending.then(flushNow).catch((err) => {
-        logError("session store flush failed", err)
+        reportFlushError(err)
       })
     }, flushDebounceMs)
   }
@@ -165,7 +176,7 @@ export function createSessionStore(filePath, { flushDebounceMs = 250, rootDir = 
     if (exitHooksInstalled) return
     exitHooksInstalled = true
 
-    const flush = () => flushNow().catch((err) => logError("session store flush failed", err))
+    const flush = () => flushNow().catch((err) => reportFlushError(err))
     process.on("beforeExit", flush)
     process.on("SIGINT", async () => {
       await flush()
