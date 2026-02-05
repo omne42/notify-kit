@@ -77,7 +77,7 @@ impl SoundSink {
             return Err(anyhow::anyhow!("sound command program is empty"));
         }
 
-        let mut child = std::process::Command::new(program)
+        let child = std::process::Command::new(program)
             .args(args)
             .spawn()
             .map_err(|err| anyhow::anyhow!("spawn sound command {program}: {err}"))?;

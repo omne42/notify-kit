@@ -62,6 +62,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `SoundSink`：拒绝空 program 的错误配置。
 - `FeishuWebhookConfig`/`FeishuWebhookSink`：`Debug` 输出不再泄露完整 webhook URL。
 - `SoundSink`：调整测试模块位置以通过 clippy（`items_after_test_module`）。
+- `SoundSink`：移除无用 `mut` 以通过 clippy（`unused_mut`）。
 - `SlackWebhookSink`：2xx 响应时会读取并校验响应 body（避免 200 + 错误文本被误判为成功）。
 - `dingtalk` / `wecom` / `feishu` sinks：2xx 响应但 body 非 JSON/读取失败时不再误判为成功（解析失败会返回错误）。
 - `BarkSink`：补充 API 级错误判断（当响应为 JSON 且包含 `code` 时），并在非 2xx 时附带截断后的响应摘要。
