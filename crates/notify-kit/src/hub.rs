@@ -42,7 +42,7 @@ impl Default for HubConfig {
     fn default() -> Self {
         Self {
             enabled_kinds: None,
-            per_sink_timeout: Duration::from_secs(2),
+            per_sink_timeout: Duration::from_secs(5),
         }
     }
 }

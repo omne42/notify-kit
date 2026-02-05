@@ -37,7 +37,7 @@ let hub = Hub::new_with_inflight_limit(
   - `None`：不过滤
   - `Some(set)`：仅允许 set 内 kind
 - `per_sink_timeout: Duration`
-  - 默认 `2s`
+  - 默认 `5s`
   - 作为兜底，避免任何 sink 卡住调用方
 
 一个更完整的配置示例：
@@ -71,6 +71,6 @@ let cfg = HubConfig {
 
 ```text
 one or more sinks failed:
-- feishu: timeout after 2s
+- feishu: timeout after 5s
 - sound: boom
 ```

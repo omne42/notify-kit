@@ -355,7 +355,7 @@ fn main() -> anyhow::Result<()> {
     let hub = Hub::new(
         HubConfig {
             enabled_kinds,
-            per_sink_timeout: Duration::from_secs(2),
+            per_sink_timeout: Duration::from_secs(5),
         },
         sinks,
     );
@@ -426,7 +426,7 @@ use notify_kit::HubConfig;
 let enabled_kinds = BTreeSet::from(["turn_completed".to_string(), "message_received".to_string()]);
 let cfg = HubConfig {
     enabled_kinds: Some(enabled_kinds),
-    per_sink_timeout: Duration::from_secs(2),
+    per_sink_timeout: Duration::from_secs(5),
 };
 ```
 
@@ -518,7 +518,7 @@ let enabled_kinds = BTreeSet::from(["turn_completed".to_string(), "approval_requ
 let hub = Hub::new(
     HubConfig {
         enabled_kinds: Some(enabled_kinds),
-        per_sink_timeout: Duration::from_secs(2),
+        per_sink_timeout: Duration::from_secs(5),
     },
     vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))],
 );
@@ -588,7 +588,7 @@ fn build_hub_from_env() -> anyhow::Result<Hub> {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .map(Duration::from_millis)
-        .unwrap_or(Duration::from_secs(2));
+        .unwrap_or(Duration::from_secs(5));
 
     Ok(Hub::new(
         HubConfig {
@@ -713,7 +713,7 @@ let hub = Hub::new_with_inflight_limit(
   - `None`：不过滤
   - `Some(set)`：仅允许 set 内 kind
 - `per_sink_timeout: Duration`
-  - 默认 `2s`
+  - 默认 `5s`
   - 作为兜底，避免任何 sink 卡住调用方
 
 一个更完整的配置示例：
@@ -746,7 +746,7 @@ let cfg = HubConfig {
 
 ```text
 one or more sinks failed:
-- feishu: timeout after 2s
+- feishu: timeout after 5s
 - sound: boom
 ```
 

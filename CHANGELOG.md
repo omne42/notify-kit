@@ -46,6 +46,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- `HubConfig`：默认 `per_sink_timeout` 从 `2s` 调整为 `5s`，避免 HTTP sinks 默认超时与 DNS 预检叠加导致的误超时。
 - `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
 - All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。

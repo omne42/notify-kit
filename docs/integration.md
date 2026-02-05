@@ -58,7 +58,7 @@ fn build_hub_from_env() -> anyhow::Result<Hub> {
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .map(Duration::from_millis)
-        .unwrap_or(Duration::from_secs(2));
+        .unwrap_or(Duration::from_secs(5));
 
     Ok(Hub::new(
         HubConfig {

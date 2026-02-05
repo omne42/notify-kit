@@ -110,7 +110,7 @@ let enabled_kinds = BTreeSet::from(["turn_completed".to_string(), "approval_requ
 let hub = Hub::new(
     HubConfig {
         enabled_kinds: Some(enabled_kinds),
-        per_sink_timeout: Duration::from_secs(2),
+        per_sink_timeout: Duration::from_secs(5),
     },
     vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))],
 );

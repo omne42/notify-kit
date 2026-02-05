@@ -48,7 +48,7 @@ fn main() -> anyhow::Result<()> {
     let hub = Hub::new(
         HubConfig {
             enabled_kinds,
-            per_sink_timeout: Duration::from_secs(2),
+            per_sink_timeout: Duration::from_secs(5),
         },
         sinks,
     );
@@ -127,6 +127,6 @@ use notify_kit::HubConfig;
 let enabled_kinds = BTreeSet::from(["turn_completed".to_string(), "message_received".to_string()]);
 let cfg = HubConfig {
     enabled_kinds: Some(enabled_kinds),
-    per_sink_timeout: Duration::from_secs(2),
+    per_sink_timeout: Duration::from_secs(5),
 };
 ```
