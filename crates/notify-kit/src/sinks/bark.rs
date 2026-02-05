@@ -206,8 +206,8 @@ impl Sink for BarkSink {
                 return Ok(());
             }
 
-            let body: serde_json::Value =
-                serde_json::from_str(body).map_err(|_| anyhow::anyhow!("decode json failed"))?;
+            let body: serde_json::Value = serde_json::from_str(body)
+                .map_err(|err| anyhow::anyhow!("decode json failed: {err}"))?;
 
             let Some(code) = body.get("code").and_then(|v| v.as_i64()) else {
                 return Ok(());

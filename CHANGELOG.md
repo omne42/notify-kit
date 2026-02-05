@@ -81,6 +81,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: IPv6 公网 IP 判定现在会拒绝 site-local `fec0::/10`（例如 `fec0::1`）。
 - Webhook/API sinks: IPv4 公网 IP 判定补齐更多 RFC6890 特殊用途网段（例如 `192.0.0.0/24`、`192.88.99.0/24`）。
 - Webhook/API sinks: `dns lookup timeout` 错误现在会注明 DNS 超时上限为 `2s`（`min(timeout, 2s)`）。
+- Webhook/API sinks: `dns lookup failed` 错误现在会保留底层错误信息（便于排障）。
+- Webhook/API sinks: `decode json failed` 错误现在会保留底层解析错误信息（便于排障）。
 - Webhook/API sinks: 收敛严格模式下的同步 DNS 预检实现，移除 per-host inflight/cache（仍保持有界并发与超时）。
 - Webhook/API sinks: 严格模式同步 DNS 预检在 thread spawn 失败时会保留底层错误信息（便于排障）。
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：严格模式下禁止关闭公网 IP 校验。

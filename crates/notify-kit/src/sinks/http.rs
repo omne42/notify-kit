@@ -299,7 +299,7 @@ fn resolve_url_to_public_addrs_with_timeout(
 fn resolve_host_to_public_addrs(host: &str) -> anyhow::Result<Vec<SocketAddr>> {
     let addrs = (host, 443)
         .to_socket_addrs()
-        .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
+        .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))?;
 
     let mut out: Vec<SocketAddr> = Vec::new();
     let mut seen = 0usize;
@@ -344,7 +344,7 @@ pub(crate) async fn build_http_client_pinned_async(
     let addrs = tokio::time::timeout(dns_timeout, lookup)
         .await
         .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
-        .map_err(|_| anyhow::anyhow!("dns lookup failed"))??;
+        .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))??;
 
     build_http_client_builder(timeout)
         .resolve_to_addrs(&host, &addrs)
@@ -559,7 +559,7 @@ pub(crate) async fn read_json_body_limited(
     max_bytes: usize,
 ) -> anyhow::Result<serde_json::Value> {
     let buf = read_body_bytes_limited(resp, max_bytes).await?;
-    serde_json::from_slice(&buf).map_err(|_| anyhow::anyhow!("decode json failed"))
+    serde_json::from_slice(&buf).map_err(|err| anyhow::anyhow!("decode json failed: {err}"))
 }
 
 pub(crate) async fn read_text_body_limited(
