@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -232,9 +232,29 @@ pub(crate) async fn send_reqwest(
 
 pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> anyhow::Result<()> {
     let path = url.path();
-    if path.starts_with(prefix) {
+    if prefix.is_empty() {
+        return Err(anyhow::anyhow!("url path is not allowed"));
+    }
+
+    if prefix.ends_with('/') {
+        if path.starts_with(prefix) {
+            return Ok(());
+        }
+        return Err(anyhow::anyhow!("url path is not allowed"));
+    }
+
+    if path == prefix {
         return Ok(());
     }
+
+    let Some(next) = path.as_bytes().get(prefix.len()) else {
+        return Err(anyhow::anyhow!("url path is not allowed"));
+    };
+
+    if path.starts_with(prefix) && *next == b'/' {
+        return Ok(());
+    }
+
     Err(anyhow::anyhow!("url path is not allowed"))
 }
 
@@ -302,13 +322,14 @@ fn resolve_host_to_public_addrs(host: &str) -> anyhow::Result<Vec<SocketAddr>> {
         .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))?;
 
     let mut out: Vec<SocketAddr> = Vec::new();
+    let mut uniq: HashSet<SocketAddr> = HashSet::new();
     let mut seen = 0usize;
     for addr in addrs {
         seen += 1;
         if !is_public_ip(addr.ip()) {
             return Err(anyhow::anyhow!("resolved ip is not allowed"));
         }
-        if !out.contains(&addr) {
+        if uniq.insert(addr) {
             out.push(addr);
         }
     }
@@ -687,6 +708,24 @@ mod tests {
         )
         .expect_err("expected invalid url");
         assert!(err.to_string().contains("port"), "{err:#}");
+    }
+
+    #[test]
+    fn path_prefix_is_segment_boundary_matched() {
+        let url = reqwest::Url::parse("https://example.com/send").expect("parse url");
+        validate_url_path_prefix(&url, "/send").expect("exact match");
+
+        let url = reqwest::Url::parse("https://example.com/send/ok").expect("parse url");
+        validate_url_path_prefix(&url, "/send").expect("segment match");
+
+        let url = reqwest::Url::parse("https://example.com/sendMessage").expect("parse url");
+        validate_url_path_prefix(&url, "/send").expect_err("should not match prefix substring");
+
+        let url = reqwest::Url::parse("https://example.com/services/x").expect("parse url");
+        validate_url_path_prefix(&url, "/services/").expect("trailing slash prefix");
+
+        let url = reqwest::Url::parse("https://example.com/servicesX").expect("parse url");
+        validate_url_path_prefix(&url, "/services/").expect_err("trailing slash prevents match");
     }
 
     #[test]
