@@ -1,6 +1,6 @@
 # Event
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate notify_kit;
 use notify_kit::{Event, Severity};
 

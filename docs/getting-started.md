@@ -24,7 +24,7 @@ notify-kit = { path = "../notify-kit/crates/notify-kit" }
 
 `Hub::notify` 需要在 **Tokio runtime** 中调用（否则会丢弃并 `tracing::warn!`）。
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 # extern crate tokio;
@@ -94,7 +94,7 @@ fn main() -> anyhow::Result<()> {
 
 ### 同时启用多个 sinks
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 #
 # extern crate anyhow;
 # extern crate notify_kit;
@@ -117,7 +117,7 @@ sinks.push(Arc::new(FeishuWebhookSink::new(FeishuWebhookConfig::new(
 
 ### 事件过滤（只发你关心的 kind）
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate notify_kit;
 use std::collections::BTreeSet;
 use std::time::Duration;

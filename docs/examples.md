@@ -6,7 +6,7 @@
 
 ## 1) CLI：任务完成时响铃（并可在终端里配置 Dock/任务栏闪烁）
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 # extern crate tokio;
@@ -33,7 +33,7 @@ rt.block_on(hub.send(Event::new("task_done", Severity::Success, "done")))?;
 
 ## 2) 服务端：关键错误同时发到多个渠道
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 #
 # extern crate anyhow;
 # extern crate notify_kit;
@@ -64,7 +64,7 @@ rt.block_on(hub.send(
 
 ## 3) CI：失败时发到通用 webhook
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 #
 # extern crate anyhow;
 # extern crate notify_kit;
@@ -94,7 +94,7 @@ rt.block_on(hub.send(Event::new("ci_failed", Severity::Error, "build failed")))?
 
 ## 4) Agent：只打开少数事件（kind allow-list）
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 #
 # extern crate anyhow;
 # extern crate notify_kit;

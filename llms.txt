@@ -202,6 +202,12 @@ Webhook 发送本质是“服务端发起 HTTP 请求”。如果 URL 可被不�
 - 校验通过后，会把本次解析结果固定到该次请求的 DNS overrides（降低“校验后被 rebinding”的 TOCTOU 风险）
 - 可通过各 sink 的 `with_public_ip_check(false)` 关闭（Feishu 的 `*_strict` 额外会在构造时也校验一次）
 
+补充说明：
+
+- “公网 IP”的判定是一个**保守**实现：除了私网/loopback/link-local，也会拒绝部分 RFC6890 中的特殊用途网段（例如 `192.0.0.0/24`、`192.88.99.0/24`）。
+- 对 IPv6，会把 `::ffff:x.y.z.w`（IPv4-mapped）以及部分过渡机制前缀按**嵌入的 IPv4**再做一次判定（例如 NAT64 well-known prefix `64:ff9b::/96`、6to4 `2002::/16`）。
+- 该判定不保证覆盖所有 IPv6 过渡/翻译前缀（例如自定义 NAT64 前缀）；在特殊网络环境可能出现误拒/漏判。把 URL 当作安全边界：优先用严格模式（allow-list + path 前缀），必要时只在受信任场景关闭公网 IP 校验。
+
 注意：这是一个“更严格、更保守”的策略；在无网络/DNS 不可用时可能导致发送失败。`*_strict` 构造函数会把校验提前到构造阶段。
 
 ## GitHub API（GitHubCommentSink）
@@ -329,7 +335,7 @@ notify-kit = { path = "../notify-kit/crates/notify-kit" }
 
 `Hub::notify` 需要在 **Tokio runtime** 中调用（否则会丢弃并 `tracing::warn!`）。
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -395,7 +401,7 @@ fn main() -> anyhow::Result<()> {
 
 ### 同时启用多个 sinks
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::sync::Arc;
 
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink, Sink, SoundConfig, SoundSink};
@@ -411,7 +417,7 @@ sinks.push(Arc::new(FeishuWebhookSink::new(FeishuWebhookConfig::new(
 
 ### 事件过滤（只发你关心的 kind）
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -435,7 +441,7 @@ let cfg = HubConfig {
 
 ## 1) CLI：任务完成时响铃（并可在终端里配置 Dock/任务栏闪烁）
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity, SoundConfig, SoundSink};
@@ -456,7 +462,7 @@ rt.block_on(hub.send(Event::new("task_done", Severity::Success, "done")))?;
 
 ## 2) 服务端：关键错误同时发到多个渠道
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity, SoundConfig, SoundSink};
@@ -479,7 +485,7 @@ rt.block_on(hub.send(
 
 ## 3) CI：失败时发到通用 webhook
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity};
@@ -501,7 +507,7 @@ rt.block_on(hub.send(Event::new("ci_failed", Severity::Error, "build failed")))?
 
 ## 4) Agent：只打开少数事件（kind allow-list）
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -554,7 +560,7 @@ your-app
 
 对应到 integration 层的伪代码：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -645,7 +651,10 @@ cargo run -p omne-agent-app-server --features notify
 
 ## 重要说明
 
-- 这些示例默认只做内存映射（重启会丢失映射）；生产环境应把映射持久化（KV/DB）。
+- 这些示例默认用内存映射；可通过 `OPENCODE_SESSION_STORE_PATH` 启用简单文件持久化（适合 demo/单实例），生产环境建议用 DB/KV。
+- 部分“回贴/发消息”失败会被 best-effort 忽略以保证主流程；可设置 `OPENCODE_BOT_VERBOSE=1`（或 `DEBUG=1`）输出被忽略的错误日志。
+- 为避免路径误用，session store 支持设置根目录：`OPENCODE_SESSION_STORE_ROOT`（store path 必须在该目录下）。
+- `OPENCODE_SESSION_STORE_ROOT` 是 best-effort 安全带而不是沙箱；仍应避免把不可信输入直接拼接到 store path，并避免用 symlink 等方式把路径指向 rootDir 之外。
 - 对于飞书/钉钉/企微等平台：**“群机器人 webhook”通常只能发消息**，想做“交互式 bot”需要使用事件订阅/Stream/回调机制。
 
 ---
@@ -673,7 +682,7 @@ cargo run -p omne-agent-app-server --features notify
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::sync::Arc;
 use notify_kit::{Hub, HubConfig, SoundConfig, SoundSink};
 
@@ -685,7 +694,7 @@ let hub = Hub::new(
 
 如果你需要对 `notify()` 的后台并发做背压（避免事件洪泛导致无界 spawn），可以用：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::sync::Arc;
 use notify_kit::{Hub, HubConfig, SoundConfig, SoundSink};
 
@@ -709,7 +718,7 @@ let hub = Hub::new_with_inflight_limit(
 
 一个更完整的配置示例：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -746,7 +755,7 @@ one or more sinks failed:
 
 # Event
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{Event, Severity};
 
 let event = Event::new("turn_completed", Severity::Success, "done")
@@ -783,7 +792,7 @@ let event = Event::new("turn_completed", Severity::Success, "done")
 
 `Sink` 是你扩展通知渠道的核心抽象：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::future::Future;
 use std::pin::Pin;
 
@@ -804,7 +813,7 @@ pub trait Sink: Send + Sync {
 
 ## 实现模板
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::future::Future;
 use std::pin::Pin;
 
@@ -890,7 +899,7 @@ impl Sink for MySink {
 
 ## 终端 bell（默认）
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{SoundConfig, SoundSink};
 
 let sink = SoundSink::new(SoundConfig { command_argv: None });
@@ -912,7 +921,7 @@ let sink = SoundSink::new(SoundConfig { command_argv: None });
 
 > 需要启用 crate feature：`notify-kit/sound-command`。
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{SoundConfig, SoundSink};
 
 let sink = SoundSink::new(SoundConfig {
@@ -945,7 +954,7 @@ let sink = SoundSink::new(SoundConfig {
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
@@ -954,7 +963,7 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 默认发送前会做 DNS 公网 IP 校验；如果你希望在 **构造阶段** 也校验一次（可能导致无网络时构造失败），可以用：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
@@ -965,7 +974,7 @@ let sink = FeishuWebhookSink::new_strict(cfg)?;
 
 如果群机器人开启了 “签名校验”，可以用：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
@@ -976,7 +985,7 @@ let sink = FeishuWebhookSink::new_with_secret(cfg, "your_secret")?;
 
 如果你需要同时启用签名 + DNS 公网 IP 校验，并且希望在 **构造阶段** 也校验一次，可以用：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx");
@@ -994,7 +1003,7 @@ let sink = FeishuWebhookSink::new_with_secret_strict(cfg, "your_secret")?;
 
 `FeishuWebhookConfig.max_chars` 用于限制最终 text 消息长度（默认 `4000`）。超出会截断并追加 `...`：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx")
@@ -1006,7 +1015,7 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 为降低 SSRF/DNS 污染风险，默认发送前会做一次 DNS 公网 IP 校验；如确有需要可关闭：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
 
 let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx")
@@ -1053,7 +1062,7 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{GitHubCommentConfig, GitHubCommentSink};
 
 let cfg = GitHubCommentConfig::new("owner", "repo", 123, "ghp_xxx");
@@ -1087,7 +1096,7 @@ let sink = GitHubCommentSink::new(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::time::Duration;
 
 use notify_kit::{SlackWebhookConfig, SlackWebhookSink};
@@ -1135,7 +1144,7 @@ let sink = SlackWebhookSink::new(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::time::Duration;
 
 use notify_kit::{DiscordWebhookConfig, DiscordWebhookSink};
@@ -1183,7 +1192,7 @@ let sink = DiscordWebhookSink::new(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::time::Duration;
 
 use notify_kit::{TelegramBotConfig, TelegramBotSink};
@@ -1226,7 +1235,7 @@ let sink = TelegramBotSink::new(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{ServerChanConfig, ServerChanSink};
 
 let cfg = ServerChanConfig::new("SCTxxxxxxxxxxxxxxxx");
@@ -1254,7 +1263,7 @@ let sink = ServerChanSink::new(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{PushPlusConfig, PushPlusSink};
 
 let cfg = PushPlusConfig::new("your_token");
@@ -1263,7 +1272,7 @@ let sink = PushPlusSink::new(cfg)?;
 
 可选：设置 channel / topic / template：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{PushPlusConfig, PushPlusSink};
 
 let cfg = PushPlusConfig::new("your_token")
@@ -1293,7 +1302,7 @@ let sink = PushPlusSink::new(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{BarkConfig, BarkSink};
 
 let cfg = BarkConfig::new("your_device_key");
@@ -1302,7 +1311,7 @@ let sink = BarkSink::new(cfg)?;
 
 可选：设置 group：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{BarkConfig, BarkSink};
 
 let cfg = BarkConfig::new("your_device_key").with_group("opencode");
@@ -1329,7 +1338,7 @@ let sink = BarkSink::new(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new("https://example.com/webhook");
@@ -1338,7 +1347,7 @@ let sink = GenericWebhookSink::new(cfg)?;
 
 可选：修改字段名、限制 URL path 前缀、限制允许的 host：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new("https://example.com/hooks/notify")
@@ -1352,7 +1361,7 @@ let sink = GenericWebhookSink::new(cfg)?;
 
 如果 webhook URL 可能来自**不可信输入/远程配置**，建议使用严格模式：强制配置 `allowed_hosts` + `path_prefix`，并且不能关闭 DNS 公网 IP 校验：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new_strict(
@@ -1365,7 +1374,7 @@ let sink = GenericWebhookSink::new_strict(cfg)?;
 
 ## 安全提示
 
-- 默认会做 DNS 公网 IP 校验（可通过 `with_public_ip_check(false)` 关闭）。
+- 默认会做 DNS 公网 IP 校验（可通过 `with_public_ip_check(false)` 关闭；出于安全考虑，关闭时必须同时配置 `allowed_hosts`）。
 - 如果你使用 `allowed_hosts`，建议把它视为安全边界（不要从不可信输入构造）；不确定时用上面的严格模式。
 
 ---
@@ -1377,7 +1386,7 @@ let sink = GenericWebhookSink::new_strict(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::time::Duration;
 
 use notify_kit::{DingTalkWebhookConfig, DingTalkWebhookSink};
@@ -1395,7 +1404,7 @@ let sink = DingTalkWebhookSink::new(cfg)?;
 
 如果群机器人开启了 “加签”，可以用：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use notify_kit::{DingTalkWebhookConfig, DingTalkWebhookSink};
 
 let cfg = DingTalkWebhookConfig::new("https://oapi.dingtalk.com/robot/send?access_token=xxx")
@@ -1442,7 +1451,7 @@ let sink = DingTalkWebhookSink::new(cfg)?;
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::time::Duration;
 
 use notify_kit::{WeComWebhookConfig, WeComWebhookSink};
@@ -1493,7 +1502,7 @@ let sink = WeComWebhookSink::new(cfg)?;
 
 ## 一个最小例子：打印到 stderr
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 use std::future::Future;
 use std::pin::Pin;
 
@@ -1741,7 +1750,7 @@ npm start
 
 ## 说明
 
-- 该 bot 会在本地启动一个 OpenCode server（端口随机），并在内存中维护 sessionWebhook → session 的映射；重启后映射会丢失。
+- 该 bot 会在本地启动一个 OpenCode server（端口随机）。默认在内存中维护 sessionWebhook → session 的映射；如设置 `OPENCODE_SESSION_STORE_PATH`（例如 `.opencode/sessions.json`），会把映射持久化到文件，重启后可恢复（可选：用 `OPENCODE_SESSION_STORE_ROOT` 限制 store 路径根目录）。
 
 ---
 ## bots/opencode-discord/README.md
@@ -1780,8 +1789,7 @@ npm start
 
 ## 说明
 
-- 该 bot 会在本地启动一个 OpenCode server（端口随机），并在内存中维护 channel → session 的映射；重启后映射会丢失。
-
+- 该 bot 会在本地启动一个 OpenCode server（端口随机）。默认在内存中维护 channel → session 的映射；如设置 `OPENCODE_SESSION_STORE_PATH`（例如 `.opencode/sessions.json`），会把映射持久化到文件，重启后可恢复（可选：用 `OPENCODE_SESSION_STORE_ROOT` 限制 store 路径根目录）。
 
 ---
 ## bots/opencode-feishu/README.md
@@ -1827,7 +1835,7 @@ npm start
 
 ## 说明
 
-- 该 bot 会在本地启动一个 OpenCode server（端口随机），并在内存中维护 chat → session 的映射；重启后映射会丢失。
+- 该 bot 会在本地启动一个 OpenCode server（端口随机）。默认在内存中维护 chat → session 的映射；如设置 `OPENCODE_SESSION_STORE_PATH`（例如 `.opencode/sessions.json`），会把映射持久化到文件，重启后可恢复（可选：用 `OPENCODE_SESSION_STORE_ROOT` 限制 store 路径根目录）。
 
 ---
 ## bots/opencode-github-action/README.md
@@ -1953,9 +1961,8 @@ npm start
 
 ## 说明
 
-- 该 bot 会在本地启动一个 OpenCode server（端口随机），并在内存中维护 thread → session 的映射；重启后映射会丢失。
+- 该 bot 会在本地启动一个 OpenCode server（端口随机）。默认在内存中维护 thread → session 的映射；如设置 `OPENCODE_SESSION_STORE_PATH`（例如 `.opencode/sessions.json`），会把映射持久化到文件，重启后可恢复（可选：用 `OPENCODE_SESSION_STORE_ROOT` 限制 store 路径根目录）。
 - 如需把事件/通知转发到飞书/钉钉/企微等平台，建议由你的上层系统订阅/采集事件后调用 `notify-kit` 的对应 sink 发送。
-
 
 ---
 ## bots/opencode-telegram/README.md
@@ -1991,8 +1998,7 @@ npm start
 ## 说明
 
 - 该 bot 使用 long polling 拉取 `getUpdates`；更适合本地/轻量部署。
-- bot 会在内存中维护 chat → session 的映射；重启后映射会丢失。
-
+- 默认在内存中维护 chat → session 的映射；如设置 `OPENCODE_SESSION_STORE_PATH`（例如 `.opencode/sessions.json`），会把映射持久化到文件，重启后可恢复（可选：用 `OPENCODE_SESSION_STORE_ROOT` 限制 store 路径根目录）。
 
 ---
 ## bots/opencode-wecom/README.md
@@ -2045,3 +2051,7 @@ npm install
 npm start
 ```
 
+## 说明
+
+- 默认在内存中维护映射；如设置 `OPENCODE_SESSION_STORE_PATH`（例如 `.opencode/sessions.json`），会把映射持久化到文件，重启后可恢复（可选：用 `OPENCODE_SESSION_STORE_ROOT` 限制 store 路径根目录）。
+- 为降低重放风险，回调会做 timestamp 时间窗校验 + nonce 去重；当前去重缓存是内存级的（重启会清空）。

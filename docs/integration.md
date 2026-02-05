@@ -28,7 +28,7 @@ your-app
 
 对应到 integration 层的伪代码：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 use std::collections::BTreeSet;

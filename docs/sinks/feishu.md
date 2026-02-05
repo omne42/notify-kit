@@ -4,7 +4,7 @@
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 # fn main() -> anyhow::Result<()> {
@@ -18,7 +18,7 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 默认发送前会做 DNS 公网 IP 校验；如果你希望在 **构造阶段** 也校验一次（可能导致无网络时构造失败），可以用：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 # fn main() -> anyhow::Result<()> {
@@ -34,7 +34,7 @@ let sink = FeishuWebhookSink::new_strict(cfg)?;
 
 如果群机器人开启了 “签名校验”，可以用：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 # fn main() -> anyhow::Result<()> {
@@ -50,7 +50,7 @@ let sink = FeishuWebhookSink::new_with_secret(cfg, "your_secret")?;
 
 如果你需要同时启用签名 + DNS 公网 IP 校验，并且希望在 **构造阶段** 也校验一次，可以用：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 # fn main() -> anyhow::Result<()> {
@@ -73,7 +73,7 @@ let sink = FeishuWebhookSink::new_with_secret_strict(cfg, "your_secret")?;
 
 `FeishuWebhookConfig.max_chars` 用于限制最终 text 消息长度（默认 `4000`）。超出会截断并追加 `...`：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 # fn main() -> anyhow::Result<()> {
@@ -90,7 +90,7 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 为降低 SSRF/DNS 污染风险，默认发送前会做一次 DNS 公网 IP 校验；如确有需要可关闭：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 # fn main() -> anyhow::Result<()> {

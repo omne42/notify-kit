@@ -7,7 +7,7 @@
 
 ## 终端 bell（默认）
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate notify_kit;
 use notify_kit::{SoundConfig, SoundSink};
 
@@ -30,7 +30,7 @@ let sink = SoundSink::new(SoundConfig { command_argv: None });
 
 > 需要启用 crate feature：`notify-kit/sound-command`。
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate notify_kit;
 use notify_kit::{SoundConfig, SoundSink};
 

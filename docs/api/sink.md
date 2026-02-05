@@ -2,7 +2,7 @@
 
 `Sink` 是你扩展通知渠道的核心抽象：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 use std::future::Future;
@@ -25,7 +25,7 @@ pub trait Sink: Send + Sync {
 
 ## 实现模板
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate anyhow;
 # extern crate notify_kit;
 use std::future::Future;

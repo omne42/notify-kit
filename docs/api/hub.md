@@ -4,7 +4,7 @@
 
 ## 构造
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate notify_kit;
 use std::sync::Arc;
 use notify_kit::{Hub, HubConfig, SoundConfig, SoundSink};
@@ -17,7 +17,7 @@ let hub = Hub::new(
 
 如果你需要对 `notify()` 的后台并发做背压（避免事件洪泛导致无界 spawn），可以用：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate notify_kit;
 use std::sync::Arc;
 use notify_kit::{Hub, HubConfig, SoundConfig, SoundSink};
@@ -42,7 +42,7 @@ let hub = Hub::new_with_inflight_limit(
 
 一个更完整的配置示例：
 
-```rust,no_run,edition2021
+```rust,no_run,edition2024
 # extern crate notify_kit;
 use std::collections::BTreeSet;
 use std::time::Duration;
