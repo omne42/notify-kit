@@ -5,9 +5,8 @@
 ## 构造
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use notify_kit::{BarkConfig, BarkSink};
 
 let cfg = BarkConfig::new("your_device_key");
@@ -19,9 +18,8 @@ let sink = BarkSink::new(cfg)?;
 可选：设置 group：
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use notify_kit::{BarkConfig, BarkSink};
 
 let cfg = BarkConfig::new("your_device_key").with_group("opencode");

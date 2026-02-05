@@ -5,9 +5,8 @@
 ## 构造
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use std::time::Duration;
 
 use notify_kit::{WeComWebhookConfig, WeComWebhookSink};

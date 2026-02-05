@@ -120,7 +120,7 @@ impl Hub {
         Ok(())
     }
 
-    pub async fn send(&self, event: Event) -> anyhow::Result<()> {
+    pub async fn send(&self, event: Event) -> crate::Result<()> {
         if !self.is_kind_enabled(event.kind.as_str()) {
             return Ok(());
         }
@@ -165,7 +165,7 @@ impl Hub {
 }
 
 impl HubInner {
-    async fn send(self: Arc<Self>, event: Arc<Event>) -> anyhow::Result<()> {
+    async fn send(self: Arc<Self>, event: Arc<Event>) -> crate::Result<()> {
         let mut handles = Vec::with_capacity(self.sinks.len());
 
         for sink in &self.sinks {
@@ -233,7 +233,7 @@ mod tests {
             self.name
         }
 
-        fn send<'a>(&'a self, _event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+        fn send<'a>(&'a self, _event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
             Box::pin(async move {
                 match self.behavior {
                     TestSinkBehavior::Ok => Ok(()),
@@ -348,7 +348,7 @@ mod tests {
                 "counting"
             }
 
-            fn send<'a>(&'a self, _event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+            fn send<'a>(&'a self, _event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
                 Box::pin(async move {
                     self.counter.fetch_add(1, Ordering::SeqCst);
                     tokio::time::sleep(self.sleep).await;

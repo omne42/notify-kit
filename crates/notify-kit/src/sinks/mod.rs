@@ -36,5 +36,5 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait Sink: Send + Sync {
     fn name(&self) -> &'static str;
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>>;
 }

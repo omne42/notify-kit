@@ -29,7 +29,6 @@ your-app
 对应到 integration 层的伪代码：
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -39,7 +38,7 @@ use notify_kit::{
     FeishuWebhookConfig, FeishuWebhookSink, Hub, HubConfig, Sink, SoundConfig, SoundSink,
 };
 
-fn build_hub_from_env() -> anyhow::Result<Hub> {
+fn build_hub_from_env() -> notify_kit::Result<Hub> {
     let mut sinks: Vec<Arc<dyn Sink>> = Vec::new();
 
     if std::env::var("MYAPP_NOTIFY_SOUND").ok().as_deref() == Some("1") {

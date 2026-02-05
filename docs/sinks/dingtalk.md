@@ -5,9 +5,8 @@
 ## 构造
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use std::time::Duration;
 
 use notify_kit::{DingTalkWebhookConfig, DingTalkWebhookSink};
@@ -28,9 +27,8 @@ let sink = DingTalkWebhookSink::new(cfg)?;
 如果群机器人开启了 “加签”，可以用：
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use notify_kit::{DingTalkWebhookConfig, DingTalkWebhookSink};
 
 let cfg = DingTalkWebhookConfig::new("https://oapi.dingtalk.com/robot/send?access_token=xxx")

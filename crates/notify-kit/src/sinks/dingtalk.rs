@@ -90,7 +90,7 @@ impl std::fmt::Debug for DingTalkWebhookSink {
 }
 
 impl DingTalkWebhookSink {
-    pub fn new(config: DingTalkWebhookConfig) -> anyhow::Result<Self> {
+    pub fn new(config: DingTalkWebhookConfig) -> crate::Result<Self> {
         let webhook_url =
             parse_and_validate_https_url(&config.webhook_url, &DINGTALK_ALLOWED_HOSTS)?;
         validate_url_path_prefix(&webhook_url, "/robot/send")?;
@@ -120,7 +120,7 @@ impl DingTalkWebhookSink {
         })
     }
 
-    fn webhook_url_with_signature(&self) -> anyhow::Result<reqwest::Url> {
+    fn webhook_url_with_signature(&self) -> crate::Result<reqwest::Url> {
         let Some(secret) = self.secret.as_deref() else {
             return Ok(self.webhook_url.clone());
         };
@@ -147,7 +147,7 @@ impl Sink for DingTalkWebhookSink {
         "dingtalk"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let url = self.webhook_url_with_signature()?;
             let client =

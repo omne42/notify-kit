@@ -34,7 +34,7 @@ impl SoundSink {
         }
     }
 
-    fn send_terminal_bell(event: &Event) -> anyhow::Result<()> {
+    fn send_terminal_bell(event: &Event) -> crate::Result<()> {
         let bell = "\u{0007}";
         let count = Self::bell_count(event.severity);
         let mut stderr = std::io::stderr().lock();
@@ -68,7 +68,7 @@ impl SoundSink {
     }
 
     #[cfg(feature = "sound-command")]
-    fn send_command(command_argv: &[String]) -> anyhow::Result<()> {
+    fn send_command(command_argv: &[String]) -> crate::Result<()> {
         let (program, args) = command_argv
             .split_first()
             .ok_or_else(|| anyhow::anyhow!("sound command argv is empty"))?;
@@ -97,7 +97,7 @@ impl Sink for SoundSink {
         "sound"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             if let Some(_argv) = self.command_argv.as_deref() {
                 #[cfg(feature = "sound-command")]

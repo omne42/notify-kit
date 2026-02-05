@@ -82,18 +82,18 @@ impl std::fmt::Debug for FeishuWebhookSink {
 }
 
 impl FeishuWebhookSink {
-    pub fn new(config: FeishuWebhookConfig) -> anyhow::Result<Self> {
+    pub fn new(config: FeishuWebhookConfig) -> crate::Result<Self> {
         Self::new_internal(config, None, false)
     }
 
-    pub fn new_strict(config: FeishuWebhookConfig) -> anyhow::Result<Self> {
+    pub fn new_strict(config: FeishuWebhookConfig) -> crate::Result<Self> {
         Self::new_internal(config, None, true)
     }
 
     pub fn new_with_secret(
         config: FeishuWebhookConfig,
         secret: impl Into<String>,
-    ) -> anyhow::Result<Self> {
+    ) -> crate::Result<Self> {
         let secret = secret.into();
         if secret.trim().is_empty() {
             return Err(anyhow::anyhow!("feishu secret must not be empty"));
@@ -104,7 +104,7 @@ impl FeishuWebhookSink {
     pub fn new_with_secret_strict(
         config: FeishuWebhookConfig,
         secret: impl Into<String>,
-    ) -> anyhow::Result<Self> {
+    ) -> crate::Result<Self> {
         let secret = secret.into();
         if secret.trim().is_empty() {
             return Err(anyhow::anyhow!("feishu secret must not be empty"));
@@ -116,7 +116,7 @@ impl FeishuWebhookSink {
         config: FeishuWebhookConfig,
         secret: Option<String>,
         validate_public_ip_at_construction: bool,
-    ) -> anyhow::Result<Self> {
+    ) -> crate::Result<Self> {
         let enforce_public_ip = config.enforce_public_ip;
         if validate_public_ip_at_construction && !enforce_public_ip {
             return Err(anyhow::anyhow!(
@@ -171,7 +171,7 @@ impl Sink for FeishuWebhookSink {
         "feishu"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let client = select_http_client(
                 &self.client,

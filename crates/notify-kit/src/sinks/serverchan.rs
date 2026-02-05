@@ -87,7 +87,7 @@ impl std::fmt::Debug for ServerChanSink {
 }
 
 impl ServerChanSink {
-    pub fn new(config: ServerChanConfig) -> anyhow::Result<Self> {
+    pub fn new(config: ServerChanConfig) -> crate::Result<Self> {
         if config.send_key.trim().is_empty() {
             return Err(anyhow::anyhow!("serverchan send_key must not be empty"));
         }
@@ -127,7 +127,7 @@ impl ServerChanSink {
     }
 }
 
-fn build_serverchan_url(send_key: &str) -> anyhow::Result<(ServerChanKind, reqwest::Url)> {
+fn build_serverchan_url(send_key: &str) -> crate::Result<(ServerChanKind, reqwest::Url)> {
     let send_key = send_key.trim();
 
     if let Some(rest) = send_key.strip_prefix("sctp") {
@@ -159,7 +159,7 @@ impl Sink for ServerChanSink {
         "serverchan"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let client = select_http_client(
                 &self.client,

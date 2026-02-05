@@ -18,5 +18,4 @@
 
 - 对每个 sink 生成一个并发任务
 - 每个任务都被 `tokio::time::timeout(per_sink_timeout, ...)` 包裹
-- 所有结果被 join 并聚合错误，最终以 `anyhow::Error` 返回
-
+- 所有结果被 join 并聚合错误，最终以 `notify_kit::Error` 返回

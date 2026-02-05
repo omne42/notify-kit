@@ -8,7 +8,6 @@
 ## 一个最小例子：打印到 stderr
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
 use std::future::Future;
 use std::pin::Pin;
@@ -26,7 +25,7 @@ impl Sink for StderrSink {
     fn send<'a>(
         &'a self,
         event: &'a Event,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = notify_kit::Result<()>> + Send + 'a>> {
         Box::pin(async move {
             eprintln!("[{}] {}", event.kind, event.title);
             Ok(())

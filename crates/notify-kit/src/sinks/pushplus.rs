@@ -119,7 +119,7 @@ impl std::fmt::Debug for PushPlusSink {
 }
 
 impl PushPlusSink {
-    pub fn new(config: PushPlusConfig) -> anyhow::Result<Self> {
+    pub fn new(config: PushPlusConfig) -> crate::Result<Self> {
         if config.token.trim().is_empty() {
             return Err(anyhow::anyhow!("pushplus token must not be empty"));
         }
@@ -188,7 +188,7 @@ impl Sink for PushPlusSink {
         "pushplus"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let client = select_http_client(
                 &self.client,

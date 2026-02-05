@@ -78,7 +78,7 @@ impl std::fmt::Debug for WeComWebhookSink {
 }
 
 impl WeComWebhookSink {
-    pub fn new(config: WeComWebhookConfig) -> anyhow::Result<Self> {
+    pub fn new(config: WeComWebhookConfig) -> crate::Result<Self> {
         let webhook_url = parse_and_validate_https_url(&config.webhook_url, &WECOM_ALLOWED_HOSTS)?;
         validate_url_path_prefix(&webhook_url, "/cgi-bin/webhook/send")?;
         let client = build_http_client(config.timeout)?;
@@ -105,7 +105,7 @@ impl Sink for WeComWebhookSink {
         "wecom"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let client = select_http_client(
                 &self.client,

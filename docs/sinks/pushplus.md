@@ -5,9 +5,8 @@
 ## 构造
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use notify_kit::{PushPlusConfig, PushPlusSink};
 
 let cfg = PushPlusConfig::new("your_token");
@@ -19,9 +18,8 @@ let sink = PushPlusSink::new(cfg)?;
 可选：设置 channel / topic / template：
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use notify_kit::{PushPlusConfig, PushPlusSink};
 
 let cfg = PushPlusConfig::new("your_token")

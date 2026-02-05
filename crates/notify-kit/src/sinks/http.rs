@@ -139,13 +139,13 @@ fn build_http_client_builder(timeout: Duration) -> reqwest::ClientBuilder {
         .redirect(reqwest::redirect::Policy::none())
 }
 
-pub(crate) fn build_http_client(timeout: Duration) -> anyhow::Result<reqwest::Client> {
+pub(crate) fn build_http_client(timeout: Duration) -> crate::Result<reqwest::Client> {
     build_http_client_builder(timeout)
         .build()
         .map_err(|err| anyhow::anyhow!("build reqwest client: {err}"))
 }
 
-pub(crate) fn parse_and_validate_https_url_basic(url_str: &str) -> anyhow::Result<reqwest::Url> {
+pub(crate) fn parse_and_validate_https_url_basic(url_str: &str) -> crate::Result<reqwest::Url> {
     let url = reqwest::Url::parse(url_str).map_err(|err| anyhow::anyhow!("invalid url: {err}"))?;
 
     if url.scheme() != "https" {
@@ -174,7 +174,7 @@ pub(crate) fn parse_and_validate_https_url_basic(url_str: &str) -> anyhow::Resul
 pub(crate) fn parse_and_validate_https_url(
     url_str: &str,
     allowed_hosts: &[&str],
-) -> anyhow::Result<reqwest::Url> {
+) -> crate::Result<reqwest::Url> {
     let url = parse_and_validate_https_url_basic(url_str)?;
     let Some(host) = url.host_str() else {
         return Err(anyhow::anyhow!("url must have a host"));
@@ -221,7 +221,7 @@ pub(crate) fn sanitize_reqwest_error(err: &reqwest::Error) -> &'static str {
 pub(crate) async fn send_reqwest(
     builder: reqwest::RequestBuilder,
     context: &str,
-) -> anyhow::Result<reqwest::Response> {
+) -> crate::Result<reqwest::Response> {
     builder.send().await.map_err(|err| {
         anyhow::anyhow!(
             "{context} request failed ({})",
@@ -230,7 +230,7 @@ pub(crate) async fn send_reqwest(
     })
 }
 
-pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> anyhow::Result<()> {
+pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> crate::Result<()> {
     let path = url.path();
     if prefix.is_empty() {
         return Err(anyhow::anyhow!("url path is not allowed"));
@@ -261,7 +261,7 @@ pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> anyh
 pub(crate) fn validate_url_resolves_to_public_ip(
     url: &reqwest::Url,
     timeout: Duration,
-) -> anyhow::Result<()> {
+) -> crate::Result<()> {
     resolve_url_to_public_addrs_with_timeout(url, timeout)?;
     Ok(())
 }
@@ -269,7 +269,7 @@ pub(crate) fn validate_url_resolves_to_public_ip(
 fn resolve_url_to_public_addrs_with_timeout(
     url: &reqwest::Url,
     timeout: Duration,
-) -> anyhow::Result<Vec<SocketAddr>> {
+) -> crate::Result<Vec<SocketAddr>> {
     let Some(host) = url.host_str() else {
         return Err(anyhow::anyhow!("url must have a host"));
     };
@@ -316,7 +316,7 @@ fn resolve_url_to_public_addrs_with_timeout(
     }
 }
 
-fn resolve_host_to_public_addrs(host: &str) -> anyhow::Result<Vec<SocketAddr>> {
+fn resolve_host_to_public_addrs(host: &str) -> crate::Result<Vec<SocketAddr>> {
     let addrs = (host, 443)
         .to_socket_addrs()
         .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))?;
@@ -344,7 +344,7 @@ fn resolve_host_to_public_addrs(host: &str) -> anyhow::Result<Vec<SocketAddr>> {
 pub(crate) async fn build_http_client_pinned_async(
     timeout: Duration,
     url: &reqwest::Url,
-) -> anyhow::Result<reqwest::Client> {
+) -> crate::Result<reqwest::Client> {
     let host = url
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("url must have a host"))?
@@ -378,7 +378,7 @@ pub(crate) async fn select_http_client(
     timeout: Duration,
     url: &reqwest::Url,
     enforce_public_ip: bool,
-) -> anyhow::Result<reqwest::Client> {
+) -> crate::Result<reqwest::Client> {
     if !enforce_public_ip {
         return Ok(base_client.clone());
     }
@@ -578,7 +578,7 @@ fn ipv4_from_6to4(addr: Ipv6Addr) -> Option<Ipv4Addr> {
 pub(crate) async fn read_json_body_limited(
     resp: reqwest::Response,
     max_bytes: usize,
-) -> anyhow::Result<serde_json::Value> {
+) -> crate::Result<serde_json::Value> {
     let buf = read_body_bytes_limited(resp, max_bytes).await?;
     serde_json::from_slice(&buf).map_err(|err| anyhow::anyhow!("decode json failed: {err}"))
 }
@@ -586,7 +586,7 @@ pub(crate) async fn read_json_body_limited(
 pub(crate) async fn read_text_body_limited(
     resp: reqwest::Response,
     max_bytes: usize,
-) -> anyhow::Result<String> {
+) -> crate::Result<String> {
     let (buf, truncated) = read_body_bytes_truncated(resp, max_bytes).await?;
     let mut out = String::from_utf8_lossy(&buf).into_owned();
     if truncated {
@@ -601,7 +601,7 @@ pub(crate) async fn read_text_body_limited(
 async fn read_body_bytes_limited(
     mut resp: reqwest::Response,
     max_bytes: usize,
-) -> anyhow::Result<Vec<u8>> {
+) -> crate::Result<Vec<u8>> {
     if max_bytes == 0 {
         return Err(anyhow::anyhow!(
             "response body too large (response body omitted)"
@@ -637,7 +637,7 @@ async fn read_body_bytes_limited(
 async fn read_body_bytes_truncated(
     mut resp: reqwest::Response,
     max_bytes: usize,
-) -> anyhow::Result<(Vec<u8>, bool)> {
+) -> crate::Result<(Vec<u8>, bool)> {
     if max_bytes == 0 {
         return Ok((Vec::new(), true));
     }

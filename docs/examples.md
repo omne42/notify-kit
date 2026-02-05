@@ -7,10 +7,9 @@
 ## 1) CLI：任务完成时响铃（并可在终端里配置 Dock/任务栏闪烁）
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
 # extern crate tokio;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity, SoundConfig, SoundSink};
@@ -35,10 +34,9 @@ rt.block_on(hub.send(Event::new("task_done", Severity::Success, "done")))?;
 
 ```rust,no_run,edition2024
 #
-# extern crate anyhow;
 # extern crate notify_kit;
 # extern crate tokio;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity, SoundConfig, SoundSink};
@@ -66,10 +64,9 @@ rt.block_on(hub.send(
 
 ```rust,no_run,edition2024
 #
-# extern crate anyhow;
 # extern crate notify_kit;
 # extern crate tokio;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use std::sync::Arc;
 
 use notify_kit::{Event, Hub, HubConfig, Severity};
@@ -96,10 +93,9 @@ rt.block_on(hub.send(Event::new("ci_failed", Severity::Error, "build failed")))?
 
 ```rust,no_run,edition2024
 #
-# extern crate anyhow;
 # extern crate notify_kit;
 # extern crate tokio;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;

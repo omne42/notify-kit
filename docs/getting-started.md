@@ -25,7 +25,6 @@ notify-kit = { path = "../notify-kit/crates/notify-kit" }
 `Hub::notify` 需要在 **Tokio runtime** 中调用（否则会丢弃并 `tracing::warn!`）。
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
 # extern crate tokio;
 # extern crate tracing;
@@ -37,7 +36,7 @@ use notify_kit::{
     Event, Hub, HubConfig, Severity, Sink, SoundConfig, SoundSink, TryNotifyError,
 };
 
-fn main() -> anyhow::Result<()> {
+fn main() -> notify_kit::Result<()> {
     // 组合多个 sinks（示例只启用 sound）
     let sinks: Vec<Arc<dyn Sink>> = vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))];
 
@@ -77,7 +76,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, notify_kit::Error>(())
     })?;
 
     Ok(())
@@ -88,7 +87,7 @@ fn main() -> anyhow::Result<()> {
 
 - `notify(event)`: fire-and-forget（spawn 后台任务并立即返回）
 - `try_notify(event) -> Result<(), TryNotifyError>`: 同 `notify`，但可检测「缺少 Tokio runtime」
-- `send(event).await -> anyhow::Result<()>`: 等待所有 sinks 完成/超时，并聚合错误信息
+- `send(event).await -> notify_kit::Result<()>`: 等待所有 sinks 完成/超时，并聚合错误信息
 
 ## 常见模式
 
@@ -96,9 +95,8 @@ fn main() -> anyhow::Result<()> {
 
 ```rust,no_run,edition2024
 #
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use std::sync::Arc;
 
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink, Sink, SoundConfig, SoundSink};

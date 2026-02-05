@@ -78,7 +78,7 @@ impl std::fmt::Debug for DiscordWebhookSink {
 }
 
 impl DiscordWebhookSink {
-    pub fn new(config: DiscordWebhookConfig) -> anyhow::Result<Self> {
+    pub fn new(config: DiscordWebhookConfig) -> crate::Result<Self> {
         let webhook_url =
             parse_and_validate_https_url(&config.webhook_url, &DISCORD_ALLOWED_HOSTS)?;
         validate_url_path_prefix(&webhook_url, "/api/webhooks/")?;
@@ -103,7 +103,7 @@ impl Sink for DiscordWebhookSink {
         "discord"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let client = select_http_client(
                 &self.client,

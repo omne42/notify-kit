@@ -91,7 +91,7 @@ impl std::fmt::Debug for BarkSink {
 }
 
 impl BarkSink {
-    pub fn new(config: BarkConfig) -> anyhow::Result<Self> {
+    pub fn new(config: BarkConfig) -> crate::Result<Self> {
         if config.device_key.trim().is_empty() {
             return Err(anyhow::anyhow!("bark device_key must not be empty"));
         }
@@ -140,7 +140,7 @@ impl Sink for BarkSink {
         "bark"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let client = select_http_client(
                 &self.client,

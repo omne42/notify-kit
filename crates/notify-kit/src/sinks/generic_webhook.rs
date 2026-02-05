@@ -122,7 +122,7 @@ impl std::fmt::Debug for GenericWebhookSink {
 }
 
 impl GenericWebhookSink {
-    pub fn new(config: GenericWebhookConfig) -> anyhow::Result<Self> {
+    pub fn new(config: GenericWebhookConfig) -> crate::Result<Self> {
         if config.payload_field.trim().is_empty() {
             return Err(anyhow::anyhow!(
                 "generic webhook payload_field must not be empty"
@@ -163,7 +163,7 @@ impl GenericWebhookSink {
         })
     }
 
-    pub fn new_strict(config: GenericWebhookConfig) -> anyhow::Result<Self> {
+    pub fn new_strict(config: GenericWebhookConfig) -> crate::Result<Self> {
         if !config.enforce_public_ip {
             return Err(anyhow::anyhow!(
                 "generic webhook strict mode requires public ip check"
@@ -232,7 +232,7 @@ impl Sink for GenericWebhookSink {
         "webhook"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let client = select_http_client(
                 &self.client,

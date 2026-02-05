@@ -5,9 +5,8 @@
 ## 构造
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new("https://example.com/webhook");
@@ -19,9 +18,8 @@ let sink = GenericWebhookSink::new(cfg)?;
 可选：修改字段名、限制 URL path 前缀、限制允许的 host：
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new("https://example.com/hooks/notify")
@@ -38,9 +36,8 @@ let sink = GenericWebhookSink::new(cfg)?;
 如果 webhook URL 可能来自**不可信输入/远程配置**，建议使用严格模式：强制配置 `allowed_hosts` + `path_prefix`，并且不能关闭 DNS 公网 IP 校验：
 
 ```rust,no_run,edition2024
-# extern crate anyhow;
 # extern crate notify_kit;
-# fn main() -> anyhow::Result<()> {
+# fn main() -> notify_kit::Result<()> {
 use notify_kit::{GenericWebhookConfig, GenericWebhookSink};
 
 let cfg = GenericWebhookConfig::new_strict(

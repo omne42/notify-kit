@@ -85,7 +85,7 @@ impl std::fmt::Debug for GitHubCommentSink {
 }
 
 impl GitHubCommentSink {
-    pub fn new(config: GitHubCommentConfig) -> anyhow::Result<Self> {
+    pub fn new(config: GitHubCommentConfig) -> crate::Result<Self> {
         validate_github_identifier("owner", &config.owner)?;
         validate_github_identifier("repo", &config.repo)?;
         if config.issue_number == 0 {
@@ -115,7 +115,7 @@ impl GitHubCommentSink {
     }
 }
 
-fn validate_github_identifier(kind: &'static str, value: &str) -> anyhow::Result<()> {
+fn validate_github_identifier(kind: &'static str, value: &str) -> crate::Result<()> {
     let value = value.trim();
     if value.is_empty() {
         return Err(anyhow::anyhow!("github {kind} must not be empty"));
@@ -136,7 +136,7 @@ fn build_issue_comment_url(
     owner: &str,
     repo: &str,
     issue_number: u64,
-) -> anyhow::Result<reqwest::Url> {
+) -> crate::Result<reqwest::Url> {
     let mut url = reqwest::Url::parse(GITHUB_API_BASE)
         .map_err(|err| anyhow::anyhow!("invalid github api base url: {err}"))?;
     let issue_segment = issue_number.to_string();
@@ -158,7 +158,7 @@ impl Sink for GitHubCommentSink {
         "github"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let payload = Self::build_payload(event, self.max_chars);
 

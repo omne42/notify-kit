@@ -4,6 +4,9 @@ mod event;
 mod hub;
 mod sinks;
 
+pub type Error = anyhow::Error;
+pub type Result<T> = std::result::Result<T, Error>;
+
 pub use crate::event::{Event, Severity};
 pub use crate::hub::{Hub, HubConfig, TryNotifyError};
 pub use crate::sinks::{

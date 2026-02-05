@@ -71,7 +71,7 @@ impl std::fmt::Debug for TelegramBotSink {
 }
 
 impl TelegramBotSink {
-    pub fn new(config: TelegramBotConfig) -> anyhow::Result<Self> {
+    pub fn new(config: TelegramBotConfig) -> crate::Result<Self> {
         if config.bot_token.trim().is_empty() {
             return Err(anyhow::anyhow!("telegram bot_token must not be empty"));
         }
@@ -112,7 +112,7 @@ impl Sink for TelegramBotSink {
         "telegram"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let payload = Self::build_payload(event, &self.chat_id, self.max_chars);
 

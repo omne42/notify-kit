@@ -140,8 +140,7 @@ This file is an LLM-friendly bundle of the `notify-kit` documentation and exampl
 
 - 对每个 sink 生成一个并发任务
 - 每个任务都被 `tokio::time::timeout(per_sink_timeout, ...)` 包裹
-- 所有结果被 join 并聚合错误，最终以 `anyhow::Error` 返回
-
+- 所有结果被 join 并聚合错误，最终以 `notify_kit::Error` 返回
 
 ---
 ## docs/security.md
@@ -344,7 +343,7 @@ use notify_kit::{
     Event, Hub, HubConfig, Severity, Sink, SoundConfig, SoundSink, TryNotifyError,
 };
 
-fn main() -> anyhow::Result<()> {
+fn main() -> notify_kit::Result<()> {
     // 组合多个 sinks（示例只启用 sound）
     let sinks: Vec<Arc<dyn Sink>> = vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))];
 
@@ -384,7 +383,7 @@ fn main() -> anyhow::Result<()> {
             }
         }
 
-        Ok::<_, anyhow::Error>(())
+        Ok::<_, notify_kit::Error>(())
     })?;
 
     Ok(())
@@ -395,7 +394,7 @@ fn main() -> anyhow::Result<()> {
 
 - `notify(event)`: fire-and-forget（spawn 后台任务并立即返回）
 - `try_notify(event) -> Result<(), TryNotifyError>`: 同 `notify`，但可检测「缺少 Tokio runtime」
-- `send(event).await -> anyhow::Result<()>`: 等待所有 sinks 完成/超时，并聚合错误信息
+- `send(event).await -> notify_kit::Result<()>`: 等待所有 sinks 完成/超时，并聚合错误信息
 
 ## 常见模式
 
@@ -569,7 +568,7 @@ use notify_kit::{
     FeishuWebhookConfig, FeishuWebhookSink, Hub, HubConfig, Sink, SoundConfig, SoundSink,
 };
 
-fn build_hub_from_env() -> anyhow::Result<Hub> {
+fn build_hub_from_env() -> notify_kit::Result<Hub> {
     let mut sinks: Vec<Arc<dyn Sink>> = Vec::new();
 
     if std::env::var("MYAPP_NOTIFY_SOUND").ok().as_deref() == Some("1") {
@@ -802,7 +801,7 @@ type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 pub trait Sink: Send + Sync {
     fn name(&self) -> &'static str;
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>>;
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, notify_kit::Result<()>>;
 }
 ```
 
@@ -829,7 +828,7 @@ impl Sink for MySink {
     fn send<'a>(
         &'a self,
         event: &'a Event,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = notify_kit::Result<()>> + Send + 'a>> {
         Box::pin(async move {
             let _ = event;
             Ok(())
@@ -1519,7 +1518,7 @@ impl Sink for StderrSink {
     fn send<'a>(
         &'a self,
         event: &'a Event,
-    ) -> Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = notify_kit::Result<()>> + Send + 'a>> {
         Box::pin(async move {
             eprintln!("[{}] {}", event.kind, event.title);
             Ok(())

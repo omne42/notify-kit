@@ -78,7 +78,7 @@ impl std::fmt::Debug for SlackWebhookSink {
 }
 
 impl SlackWebhookSink {
-    pub fn new(config: SlackWebhookConfig) -> anyhow::Result<Self> {
+    pub fn new(config: SlackWebhookConfig) -> crate::Result<Self> {
         let webhook_url = parse_and_validate_https_url(&config.webhook_url, &SLACK_ALLOWED_HOSTS)?;
         validate_url_path_prefix(&webhook_url, "/services/")?;
         let client = build_http_client(config.timeout)?;
@@ -102,7 +102,7 @@ impl Sink for SlackWebhookSink {
         "slack"
     }
 
-    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, anyhow::Result<()>> {
+    fn send<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
         Box::pin(async move {
             let client = select_http_client(
                 &self.client,
