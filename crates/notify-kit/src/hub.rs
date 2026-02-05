@@ -151,29 +151,29 @@ impl Hub {
 
 impl HubInner {
     async fn send(self: Arc<Self>, event: Event) -> anyhow::Result<()> {
-        let mut join_set = tokio::task::JoinSet::<(String, anyhow::Result<()>)>::new();
         let event = Arc::new(event);
+        let mut handles = Vec::with_capacity(self.sinks.len());
 
         for sink in &self.sinks {
             let sink = sink.clone();
             let event = event.clone();
             let timeout = self.per_sink_timeout;
-            join_set.spawn(async move {
-                let name = sink.name().to_string();
-                let res = match tokio::time::timeout(timeout, sink.send(&event)).await {
+            let name = sink.name().to_string();
+            let handle = tokio::spawn(async move {
+                match tokio::time::timeout(timeout, sink.send(&event)).await {
                     Ok(inner) => inner,
                     Err(_) => Err(anyhow::anyhow!("timeout after {timeout:?}")),
-                };
-                (name, res)
+                }
             });
+            handles.push((name, handle));
         }
 
         let mut failures: Vec<(String, anyhow::Error)> = Vec::new();
-        while let Some(joined) = join_set.join_next().await {
-            match joined {
-                Ok((_name, Ok(()))) => {}
-                Ok((name, Err(err))) => failures.push((name, err)),
-                Err(err) => failures.push(("join".to_string(), err.into())),
+        for (name, handle) in handles {
+            match handle.await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => failures.push((name, err)),
+                Err(err) => failures.push((name, err.into())),
             }
         }
 
@@ -211,6 +211,7 @@ mod tests {
         Ok,
         Err,
         Sleep(Duration),
+        Panic,
     }
 
     impl Sink for TestSink {
@@ -227,6 +228,7 @@ mod tests {
                         tokio::time::sleep(d).await;
                         Ok(())
                     }
+                    TestSinkBehavior::Panic => panic!("boom"),
                 }
             })
         }
@@ -369,6 +371,34 @@ mod tests {
 
             tokio::time::sleep(Duration::from_millis(80)).await;
             assert_eq!(counter.load(Ordering::SeqCst), 1);
+        });
+    }
+
+    #[test]
+    fn send_includes_sink_name_on_panic() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build tokio runtime");
+
+        rt.block_on(async {
+            let sinks: Vec<Arc<dyn Sink>> = vec![Arc::new(TestSink {
+                name: "panic",
+                behavior: TestSinkBehavior::Panic,
+            })];
+
+            let hub = Hub::new(
+                HubConfig {
+                    enabled_kinds: None,
+                    per_sink_timeout: Duration::from_secs(1),
+                },
+                sinks,
+            );
+            let event = Event::new("kind", Severity::Info, "title");
+
+            let err = hub.send(event).await.expect_err("expected panic failure");
+            let msg = err.to_string();
+            assert!(msg.contains("- panic:"), "{msg}");
         });
     }
 }

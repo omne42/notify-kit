@@ -47,6 +47,10 @@ static SYNC_DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<SyncSemaphore>> = OnceLock::new()
 static SYNC_DNS_CACHE: OnceLock<Mutex<HashMap<String, CachedDnsResult>>> = OnceLock::new();
 static SYNC_DNS_INFLIGHT: OnceLock<Mutex<HashMap<String, Arc<InflightResolve>>>> = OnceLock::new();
 
+fn dns_lookup_timeout_message() -> String {
+    format!("dns lookup timeout (capped at {DEFAULT_DNS_LOOKUP_TIMEOUT:?})")
+}
+
 fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinnedClient>> {
     PINNED_CLIENT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
@@ -332,7 +336,7 @@ fn resolve_url_to_public_addrs_with_timeout(
 
     let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
     if dns_timeout == Duration::ZERO {
-        return Err(anyhow::anyhow!("dns lookup timeout"));
+        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()));
     }
 
     let now = Instant::now();
@@ -375,14 +379,15 @@ fn resolve_url_to_public_addrs_with_timeout(
             .clone()
             .acquire_timeout(remaining)
         else {
-            inflight.set_result(Err("dns lookup timeout".to_string()));
+            let msg = dns_lookup_timeout_message();
+            inflight.set_result(Err(msg.clone()));
             {
                 let mut cache = sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
                 cache.retain(|_, v| v.expires_at > now);
                 cache.insert(
                     host.clone(),
                     CachedDnsResult {
-                        result: Err("dns lookup timeout".to_string()),
+                        result: Err(msg.clone()),
                         expires_at: now + DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL,
                     },
                 );
@@ -397,7 +402,7 @@ fn resolve_url_to_public_addrs_with_timeout(
             {
                 inflight_map.remove(&host);
             }
-            return Err(anyhow::anyhow!("dns lookup timeout"));
+            return Err(anyhow::anyhow!("{msg}"));
         };
 
         let inflight_entry = inflight.clone();
@@ -496,15 +501,16 @@ fn resolve_url_to_public_addrs_with_timeout(
 
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining == Duration::ZERO {
-        return Err(anyhow::anyhow!("dns lookup timeout"));
+        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()));
     }
 
     match inflight.wait(remaining) {
         Some(Ok(addrs)) => Ok((*addrs).clone()),
         Some(Err(msg)) => Err(anyhow::anyhow!("{msg}")),
         None => {
-            let msg = "dns lookup timeout".to_string();
+            let msg = dns_lookup_timeout_message();
             if inflight.set_result_if_empty(Err(msg.clone())) {
+                let msg_for_cache = msg.clone();
                 let now = Instant::now();
                 {
                     let mut cache = sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
@@ -512,7 +518,7 @@ fn resolve_url_to_public_addrs_with_timeout(
                     cache.insert(
                         host.clone(),
                         CachedDnsResult {
-                            result: Err(msg),
+                            result: Err(msg_for_cache),
                             expires_at: now + DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL,
                         },
                     );
@@ -528,7 +534,7 @@ fn resolve_url_to_public_addrs_with_timeout(
                     inflight_map.remove(&host);
                 }
             }
-            Err(anyhow::anyhow!("dns lookup timeout"))
+            Err(anyhow::anyhow!("{msg}"))
         }
     }
 }
@@ -569,7 +575,7 @@ pub(crate) async fn build_http_client_pinned_async(
     let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
     let permit = tokio::time::timeout(dns_timeout, dns_lookup_semaphore().clone().acquire_owned())
         .await
-        .map_err(|_| anyhow::anyhow!("dns lookup timeout"))?
+        .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
         .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
     let lookup = tokio::task::spawn_blocking({
         let host = host.clone();
@@ -580,7 +586,7 @@ pub(crate) async fn build_http_client_pinned_async(
     });
     let addrs = tokio::time::timeout(dns_timeout, lookup)
         .await
-        .map_err(|_| anyhow::anyhow!("dns lookup timeout"))?
+        .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
         .map_err(|_| anyhow::anyhow!("dns lookup failed"))??;
 
     build_http_client_builder(timeout)
@@ -701,6 +707,10 @@ fn is_public_ipv4(addr: Ipv4Addr) -> bool {
 }
 
 fn is_public_ipv6(addr: Ipv6Addr) -> bool {
+    if let Some(v4) = addr.to_ipv4() {
+        return is_public_ipv4(v4);
+    }
+
     let bytes = addr.octets();
 
     // Unspecified :: / loopback ::1
@@ -869,9 +879,12 @@ mod tests {
     #[test]
     fn ip_global_checks_work_for_common_ranges() {
         assert!(!is_public_ip(IpAddr::from_str("127.0.0.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("::ffff:127.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("10.0.0.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("::ffff:10.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("169.254.1.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::1").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("8.8.8.8").unwrap()));
+        assert!(is_public_ip(IpAddr::from_str("::ffff:8.8.8.8").unwrap()));
     }
 }
