@@ -87,10 +87,20 @@ impl Hub {
     ///   logged.
     /// - Concurrency is bounded; if overloaded, notifications are dropped (with a warning).
     pub fn notify(&self, event: Event) {
-        let kind = event.kind.clone();
-        if let Err(err) = self.try_notify(event) {
-            tracing::warn!(sink = "hub", kind = %kind, "notify dropped: {err}");
+        if !self.is_kind_enabled(event.kind.as_str()) {
+            return;
         }
+
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!(
+                sink = "hub",
+                kind = %event.kind,
+                "notify dropped: no tokio runtime"
+            );
+            return;
+        };
+
+        self.try_notify_spawn(handle, Arc::new(event));
     }
 
     /// Attempt to enqueue a fire-and-forget notification.
@@ -101,26 +111,11 @@ impl Hub {
             return Ok(());
         }
 
-        let inner = self.inner.clone();
-        let kind = event.kind.clone();
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             return Err(TryNotifyError::NoTokioRuntime);
         };
 
-        let permit = match inner.inflight.clone().try_acquire_owned() {
-            Ok(permit) => permit,
-            Err(_) => {
-                tracing::warn!(sink = "hub", kind = %kind, "notify dropped: overloaded");
-                return Ok(());
-            }
-        };
-
-        handle.spawn(async move {
-            let _permit = permit;
-            if let Err(err) = inner.send(event).await {
-                tracing::warn!(sink = "hub", kind = %kind, "notify failed: {err}");
-            }
-        });
+        self.try_notify_spawn(handle, Arc::new(event));
 
         Ok(())
     }
@@ -138,7 +133,7 @@ impl Hub {
             .acquire_owned()
             .await
             .map_err(|_| anyhow::anyhow!("hub inflight semaphore closed"))?;
-        self.inner.clone().send(event).await
+        self.inner.clone().send(Arc::new(event)).await
     }
 
     fn is_kind_enabled(&self, kind: &str) -> bool {
@@ -147,11 +142,29 @@ impl Hub {
         };
         enabled.contains(kind)
     }
+
+    fn try_notify_spawn(&self, handle: tokio::runtime::Handle, event: Arc<Event>) {
+        let inner = self.inner.clone();
+
+        let permit = match inner.inflight.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                tracing::warn!(sink = "hub", kind = %event.kind, "notify dropped: overloaded");
+                return;
+            }
+        };
+
+        handle.spawn(async move {
+            let _permit = permit;
+            if let Err(err) = inner.send(event.clone()).await {
+                tracing::warn!(sink = "hub", kind = %event.kind, "notify failed: {err}");
+            }
+        });
+    }
 }
 
 impl HubInner {
-    async fn send(self: Arc<Self>, event: Event) -> anyhow::Result<()> {
-        let event = Arc::new(event);
+    async fn send(self: Arc<Self>, event: Arc<Event>) -> anyhow::Result<()> {
         let mut handles = Vec::with_capacity(self.sinks.len());
 
         for sink in &self.sinks {
