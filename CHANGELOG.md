@@ -52,6 +52,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `GenericWebhookSink`：关闭 DNS 公网 IP 校验时，要求同时配置 `allowed_hosts`（减少 SSRF 风险）。
 - Docs: 统一为 mdBook 文档（`./scripts/docs.sh` 本地预览/测试）。
 - Docs: 文档 Rust 代码示例统一标注为 `edition2024`。
+- Docs: mdBook 安装命令统一使用 `cargo install mdbook --locked`（更可复现）。
 - Dev: 在提交门禁中增加 bot 示例的 Node.js 语法校验（不要求安装依赖）。
 - Docs: 重构 `docs/SUMMARY.md` 的信息架构（Overview / Getting Started / Guides / Reference / Sinks）。
 - Docs: `./scripts/docs.sh` 允许透传 mdBook 参数（便于容器/远程预览）。

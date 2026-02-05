@@ -43,7 +43,7 @@ notify-kit = { path = "crates/notify-kit" }
 ## 文档
 
 - mdBook：`docs/README.md`（目录：`docs/SUMMARY.md`）
-- 本地预览（含搜索）：`./scripts/docs.sh serve`（需要先 `cargo install mdbook`）
+- 本地预览（含搜索）：`./scripts/docs.sh serve`（需要先 `cargo install mdbook --locked`）
 - Rustdoc：`cargo doc -p notify-kit --open`
 - LLM 友好入口：`llms.txt`（由 `./scripts/build-llms-txt.sh` 生成）
 

@@ -49,7 +49,7 @@ cargo test --workspace
 首次使用需要安装：
 
 ```bash
-cargo install mdbook
+cargo install mdbook --locked
 ```
 
 ## LLM 友好文档（llms.txt）

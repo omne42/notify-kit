@@ -8,7 +8,7 @@ if ! command -v mdbook >/dev/null 2>&1; then
 docs: mdbook not found.
 
 Install:
-  cargo install mdbook
+  cargo install mdbook --locked
 
 Then run:
   ./scripts/docs.sh serve
