@@ -69,8 +69,10 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `DiscordWebhookSink` / `GenericWebhookSink`：非 2xx 时附带截断后的响应摘要，便于定位问题。
 - `serverchan` sink：错误信息不再回显第三方返回的 message（保持低敏感）。
 - `Hub`：sink task panic 时错误聚合现在会保留 sink 名称（便于定位）。
+- `Hub`：聚合 sink 结果时不再为 sink 名称分配 `String`（减少堆分配）。
 - Webhook/API sinks: 修复 `enforce_public_ip` 打开时未实际使用 pinned client 的问题。
 - Webhook/API sinks: 公网 IP 判定现在会正确处理 IPv4-mapped IPv6（例如 `::ffff:127.0.0.1`），避免绕过 SSRF 防护。
+- Webhook/API sinks: 公网 IP 判定现在会识别 NAT64 well-known prefix `64:ff9b::/96`，按嵌入的 IPv4 再判定（兼容 DNS64 且避免绕过 SSRF 防护）。
 - Webhook/API sinks: IPv6 公网 IP 判定现在会拒绝 site-local `fec0::/10`（例如 `fec0::1`）。
 - Webhook/API sinks: `dns lookup timeout` 错误现在会注明 DNS 超时上限为 `2s`（`min(timeout, 2s)`）。
 - Webhook/API sinks: 收敛严格模式下的同步 DNS 预检实现，移除 per-host inflight/cache（仍保持有界并发与超时）。

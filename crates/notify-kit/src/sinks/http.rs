@@ -470,6 +470,10 @@ fn is_public_ipv6(addr: Ipv6Addr) -> bool {
         return is_public_ipv4(v4);
     }
 
+    if let Some(v4) = ipv4_from_nat64_well_known_prefix(addr) {
+        return is_public_ipv4(v4);
+    }
+
     let bytes = addr.octets();
 
     // Unspecified :: / loopback ::1
@@ -503,6 +507,15 @@ fn is_public_ipv6(addr: Ipv6Addr) -> bool {
     }
 
     true
+}
+
+fn ipv4_from_nat64_well_known_prefix(addr: Ipv6Addr) -> Option<Ipv4Addr> {
+    let bytes = addr.octets();
+    // NAT64 Well-Known Prefix (RFC6052): 64:ff9b::/96
+    if bytes[..12] == [0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0] {
+        return Some(Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15]));
+    }
+    None
 }
 
 pub(crate) async fn read_json_body_limited(
@@ -644,12 +657,15 @@ mod tests {
     fn ip_global_checks_work_for_common_ranges() {
         assert!(!is_public_ip(IpAddr::from_str("127.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::ffff:127.0.0.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("64:ff9b::7f00:1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("10.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::ffff:10.0.0.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("64:ff9b::a00:1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("fec0::1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("169.254.1.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::1").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("8.8.8.8").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("::ffff:8.8.8.8").unwrap()));
+        assert!(is_public_ip(IpAddr::from_str("64:ff9b::808:808").unwrap()));
     }
 }

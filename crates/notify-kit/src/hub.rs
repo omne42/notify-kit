@@ -158,7 +158,7 @@ impl HubInner {
             let sink = sink.clone();
             let event = event.clone();
             let timeout = self.per_sink_timeout;
-            let name = sink.name().to_string();
+            let name = sink.name();
             let handle = tokio::spawn(async move {
                 match tokio::time::timeout(timeout, sink.send(&event)).await {
                     Ok(inner) => inner,
@@ -168,7 +168,7 @@ impl HubInner {
             handles.push((name, handle));
         }
 
-        let mut failures: Vec<(String, anyhow::Error)> = Vec::new();
+        let mut failures: Vec<(&'static str, anyhow::Error)> = Vec::new();
         for (name, handle) in handles {
             match handle.await {
                 Ok(Ok(())) => {}
