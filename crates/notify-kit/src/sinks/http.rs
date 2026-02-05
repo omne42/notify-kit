@@ -12,10 +12,6 @@ const DEFAULT_DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 const DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT: usize = 32;
 const DEFAULT_PINNED_CLIENT_TTL: Duration = Duration::from_secs(60);
 const DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES: usize = 256;
-const DEFAULT_SYNC_DNS_POSITIVE_CACHE_TTL: Duration = DEFAULT_PINNED_CLIENT_TTL;
-const DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(5);
-const DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES: usize = 256;
-const DEFAULT_MAX_SYNC_DNS_INFLIGHT_HOSTS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PinnedClientKey {
@@ -29,23 +25,10 @@ struct CachedPinnedClient {
     expires_at: Instant,
 }
 
-#[derive(Clone)]
-struct CachedDnsResult {
-    result: Result<Arc<Vec<SocketAddr>>, String>,
-    expires_at: Instant,
-}
-
-struct InflightResolve {
-    result: Mutex<Option<Result<Arc<Vec<SocketAddr>>, String>>>,
-    cv: Condvar,
-}
-
 static PINNED_CLIENT_CACHE: OnceLock<RwLock<HashMap<PinnedClientKey, CachedPinnedClient>>> =
     OnceLock::new();
 static DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 static SYNC_DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<SyncSemaphore>> = OnceLock::new();
-static SYNC_DNS_CACHE: OnceLock<Mutex<HashMap<String, CachedDnsResult>>> = OnceLock::new();
-static SYNC_DNS_INFLIGHT: OnceLock<Mutex<HashMap<String, Arc<InflightResolve>>>> = OnceLock::new();
 
 fn dns_lookup_timeout_message() -> String {
     format!("dns lookup timeout (capped at {DEFAULT_DNS_LOOKUP_TIMEOUT:?})")
@@ -57,14 +40,6 @@ fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinne
 
 fn dns_lookup_semaphore() -> &'static Arc<Semaphore> {
     DNS_LOOKUP_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT)))
-}
-
-fn sync_dns_cache() -> &'static Mutex<HashMap<String, CachedDnsResult>> {
-    SYNC_DNS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn sync_dns_inflight() -> &'static Mutex<HashMap<String, Arc<InflightResolve>>> {
-    SYNC_DNS_INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn cap_hashmap_entries<K: Clone + Eq + Hash, V>(cache: &mut HashMap<K, V>, max: usize, keep: &K) {
@@ -87,61 +62,6 @@ fn cap_hashmap_entries<K: Clone + Eq + Hash, V>(cache: &mut HashMap<K, V>, max: 
         cache.remove(&k);
         if cache.len() <= max {
             break;
-        }
-    }
-}
-
-impl InflightResolve {
-    fn new() -> Self {
-        Self {
-            result: Mutex::new(None),
-            cv: Condvar::new(),
-        }
-    }
-
-    fn set_result(&self, result: Result<Arc<Vec<SocketAddr>>, String>) {
-        let mut guard = self.result.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(result);
-        self.cv.notify_all();
-    }
-
-    fn set_result_if_empty(&self, result: Result<Arc<Vec<SocketAddr>>, String>) -> bool {
-        let mut guard = self.result.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.is_some() {
-            return false;
-        }
-        *guard = Some(result);
-        self.cv.notify_all();
-        true
-    }
-
-    fn wait(&self, timeout: Duration) -> Option<Result<Arc<Vec<SocketAddr>>, String>> {
-        if timeout == Duration::ZERO {
-            return None;
-        }
-
-        let deadline = Instant::now() + timeout;
-        let mut guard = self.result.lock().unwrap_or_else(|e| e.into_inner());
-        loop {
-            if let Some(res) = guard.as_ref() {
-                return Some(res.clone());
-            }
-
-            let now = Instant::now();
-            if now >= deadline {
-                return None;
-            }
-
-            let remaining = deadline.duration_since(now);
-            let (next, wait) = self
-                .cv
-                .wait_timeout(guard, remaining)
-                .unwrap_or_else(|e| e.into_inner());
-            guard = next;
-
-            if wait.timed_out() {
-                return None;
-            }
         }
     }
 }
@@ -339,164 +259,27 @@ fn resolve_url_to_public_addrs_with_timeout(
         return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()));
     }
 
-    let now = Instant::now();
-    let host = host.to_ascii_lowercase();
+    let deadline = Instant::now() + dns_timeout;
 
-    {
-        let mut cache = sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
-        cache.retain(|_, v| v.expires_at > now);
-        if let Some(cached) = cache.get(&host) {
-            if cached.expires_at > now {
-                return match &cached.result {
-                    Ok(addrs) => Ok((**addrs).clone()),
-                    Err(msg) => Err(anyhow::anyhow!("{msg}")),
-                };
-            }
-        }
-    }
-
-    let deadline = now + dns_timeout;
-
-    let (inflight, leader) = {
-        let mut inflight = sync_dns_inflight()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        if let Some(existing) = inflight.get(&host) {
-            (existing.clone(), false)
-        } else {
-            if inflight.len() >= DEFAULT_MAX_SYNC_DNS_INFLIGHT_HOSTS {
-                return Err(anyhow::anyhow!("dns lookup failed"));
-            }
-            let entry = Arc::new(InflightResolve::new());
-            inflight.insert(host.clone(), entry.clone());
-            (entry, true)
-        }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let Some(permit) = sync_dns_lookup_semaphore()
+        .clone()
+        .acquire_timeout(remaining)
+    else {
+        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()));
     };
 
-    if leader {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let Some(permit) = sync_dns_lookup_semaphore()
-            .clone()
-            .acquire_timeout(remaining)
-        else {
-            let msg = dns_lookup_timeout_message();
-            inflight.set_result(Err(msg.clone()));
-            {
-                let mut cache = sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
-                cache.retain(|_, v| v.expires_at > now);
-                cache.insert(
-                    host.clone(),
-                    CachedDnsResult {
-                        result: Err(msg.clone()),
-                        expires_at: now + DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL,
-                    },
-                );
-                cap_hashmap_entries(&mut cache, DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES, &host);
-            }
-            let mut inflight_map = sync_dns_inflight()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if inflight_map
-                .get(&host)
-                .is_some_and(|current| Arc::ptr_eq(current, &inflight))
-            {
-                inflight_map.remove(&host);
-            }
-            return Err(anyhow::anyhow!("{msg}"));
-        };
-
-        let inflight_entry = inflight.clone();
-        let host_key = host.clone();
-        let spawn_res = std::thread::Builder::new()
-            .name("notify-kit-dns".to_string())
-            .spawn(move || {
-                let _permit = permit;
-                let res = resolve_host_to_public_addrs(&host_key);
-                match res {
-                    Ok(addrs) => {
-                        let addrs = Arc::new(addrs);
-                        let now = Instant::now();
-
-                        {
-                            let mut cache =
-                                sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
-                            cache.retain(|_, v| v.expires_at > now);
-                            cache.insert(
-                                host_key.clone(),
-                                CachedDnsResult {
-                                    result: Ok(addrs.clone()),
-                                    expires_at: now + DEFAULT_SYNC_DNS_POSITIVE_CACHE_TTL,
-                                },
-                            );
-                            cap_hashmap_entries(
-                                &mut cache,
-                                DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES,
-                                &host_key,
-                            );
-                        }
-
-                        inflight_entry.set_result(Ok(addrs));
-                    }
-                    Err(err) => {
-                        let msg = err.to_string();
-                        let now = Instant::now();
-                        {
-                            let mut cache =
-                                sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
-                            cache.retain(|_, v| v.expires_at > now);
-                            cache.insert(
-                                host_key.clone(),
-                                CachedDnsResult {
-                                    result: Err(msg.clone()),
-                                    expires_at: now + DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL,
-                                },
-                            );
-                            cap_hashmap_entries(
-                                &mut cache,
-                                DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES,
-                                &host_key,
-                            );
-                        }
-                        inflight_entry.set_result(Err(msg));
-                    }
-                }
-
-                let mut inflight_map = sync_dns_inflight()
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                if inflight_map
-                    .get(&host_key)
-                    .is_some_and(|current| Arc::ptr_eq(current, &inflight_entry))
-                {
-                    inflight_map.remove(&host_key);
-                }
-            });
-        if spawn_res.is_err() {
-            inflight.set_result(Err("dns lookup failed".to_string()));
-            let now = Instant::now();
-            {
-                let mut cache = sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
-                cache.retain(|_, v| v.expires_at > now);
-                cache.insert(
-                    host.clone(),
-                    CachedDnsResult {
-                        result: Err("dns lookup failed".to_string()),
-                        expires_at: now + DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL,
-                    },
-                );
-                cap_hashmap_entries(&mut cache, DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES, &host);
-            }
-            let mut inflight_map = sync_dns_inflight()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
-            if inflight_map
-                .get(&host)
-                .is_some_and(|current| Arc::ptr_eq(current, &inflight))
-            {
-                inflight_map.remove(&host);
-            }
-            return Err(anyhow::anyhow!("dns lookup failed"));
-        }
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let host = host.to_ascii_lowercase();
+    let spawn_res = std::thread::Builder::new()
+        .name("notify-kit-dns".to_string())
+        .spawn(move || {
+            let _permit = permit;
+            let res = resolve_host_to_public_addrs(&host);
+            let _ = tx.send(res);
+        });
+    if spawn_res.is_err() {
+        return Err(anyhow::anyhow!("dns lookup failed"));
     }
 
     let remaining = deadline.saturating_duration_since(Instant::now());
@@ -504,37 +287,13 @@ fn resolve_url_to_public_addrs_with_timeout(
         return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()));
     }
 
-    match inflight.wait(remaining) {
-        Some(Ok(addrs)) => Ok((*addrs).clone()),
-        Some(Err(msg)) => Err(anyhow::anyhow!("{msg}")),
-        None => {
-            let msg = dns_lookup_timeout_message();
-            if inflight.set_result_if_empty(Err(msg.clone())) {
-                let msg_for_cache = msg.clone();
-                let now = Instant::now();
-                {
-                    let mut cache = sync_dns_cache().lock().unwrap_or_else(|e| e.into_inner());
-                    cache.retain(|_, v| v.expires_at > now);
-                    cache.insert(
-                        host.clone(),
-                        CachedDnsResult {
-                            result: Err(msg_for_cache),
-                            expires_at: now + DEFAULT_SYNC_DNS_NEGATIVE_CACHE_TTL,
-                        },
-                    );
-                    cap_hashmap_entries(&mut cache, DEFAULT_MAX_SYNC_DNS_CACHE_ENTRIES, &host);
-                }
-                let mut inflight_map = sync_dns_inflight()
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                if inflight_map
-                    .get(&host)
-                    .is_some_and(|current| Arc::ptr_eq(current, &inflight))
-                {
-                    inflight_map.remove(&host);
-                }
-            }
-            Err(anyhow::anyhow!("{msg}"))
+    match rx.recv_timeout(remaining) {
+        Ok(res) => res,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err(anyhow::anyhow!("dns lookup failed"))
         }
     }
 }
@@ -733,6 +492,11 @@ fn is_public_ipv6(addr: Ipv6Addr) -> bool {
         return false;
     }
 
+    // Site-local fec0::/10 (deprecated; treat as non-public)
+    if bytes[0] == 0xfe && (bytes[1] & 0xc0) == 0xc0 {
+        return false;
+    }
+
     // Documentation 2001:db8::/32
     if bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0x0d && bytes[3] == 0xb8 {
         return false;
@@ -882,6 +646,7 @@ mod tests {
         assert!(!is_public_ip(IpAddr::from_str("::ffff:127.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("10.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::ffff:10.0.0.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("fec0::1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("169.254.1.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::1").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("8.8.8.8").unwrap()));
