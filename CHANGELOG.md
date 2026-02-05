@@ -73,9 +73,12 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: 修复 `enforce_public_ip` 打开时未实际使用 pinned client 的问题。
 - Webhook/API sinks: 公网 IP 判定现在会正确处理 IPv4-mapped IPv6（例如 `::ffff:127.0.0.1`），避免绕过 SSRF 防护。
 - Webhook/API sinks: 公网 IP 判定现在会识别 NAT64 well-known prefix `64:ff9b::/96`，按嵌入的 IPv4 再判定（兼容 DNS64 且避免绕过 SSRF 防护）。
+- Webhook/API sinks: 公网 IP 判定现在会识别 6to4 `2002::/16`，按嵌入的 IPv4 再判定（避免绕过 SSRF 防护）。
 - Webhook/API sinks: IPv6 公网 IP 判定现在会拒绝 site-local `fec0::/10`（例如 `fec0::1`）。
+- Webhook/API sinks: IPv4 公网 IP 判定补齐更多 RFC6890 特殊用途网段（例如 `192.0.0.0/24`、`192.88.99.0/24`）。
 - Webhook/API sinks: `dns lookup timeout` 错误现在会注明 DNS 超时上限为 `2s`（`min(timeout, 2s)`）。
 - Webhook/API sinks: 收敛严格模式下的同步 DNS 预检实现，移除 per-host inflight/cache（仍保持有界并发与超时）。
+- Webhook/API sinks: 严格模式同步 DNS 预检在 thread spawn 失败时会保留底层错误信息（便于排障）。
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：严格模式下禁止关闭公网 IP 校验。
 - `bots/opencode-feishu`：修正 Feishu SDK 的 ESM 导入与事件名（`im.message.receive_v1`），并启用 callback challenge 自动处理。
 - `bots/opencode-github-action`：修正示例安装命令为 `npm install`（仓库未提供 lockfile，避免 `npm ci` 失败）。

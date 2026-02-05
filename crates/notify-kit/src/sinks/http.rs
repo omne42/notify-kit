@@ -271,16 +271,14 @@ fn resolve_url_to_public_addrs_with_timeout(
 
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let host = host.to_ascii_lowercase();
-    let spawn_res = std::thread::Builder::new()
+    std::thread::Builder::new()
         .name("notify-kit-dns".to_string())
         .spawn(move || {
             let _permit = permit;
             let res = resolve_host_to_public_addrs(&host);
             let _ = tx.send(res);
-        });
-    if spawn_res.is_err() {
-        return Err(anyhow::anyhow!("dns lookup failed"));
-    }
+        })
+        .map_err(|err| anyhow::anyhow!("dns lookup spawn failed: {err}"))?;
 
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining == Duration::ZERO {
@@ -421,6 +419,11 @@ fn is_public_ipv4(addr: Ipv4Addr) -> bool {
         return false;
     }
 
+    // IETF protocol assignments (RFC6890)
+    if (a, b, c) == (192, 0, 0) {
+        return false;
+    }
+
     // Private ranges (RFC1918)
     if a == 10 {
         return false;
@@ -444,6 +447,26 @@ fn is_public_ipv4(addr: Ipv4Addr) -> bool {
 
     // Link-local
     if a == 169 && b == 254 {
+        return false;
+    }
+
+    // 6to4 relay anycast (RFC3068; deprecated)
+    if (a, b, c) == (192, 88, 99) {
+        return false;
+    }
+
+    // AS112 (RFC7534)
+    if (a, b, c) == (192, 31, 196) {
+        return false;
+    }
+
+    // AMT (RFC7450)
+    if (a, b, c) == (192, 52, 193) {
+        return false;
+    }
+
+    // Direct Delegation AS112 (RFC7535)
+    if (a, b, c) == (192, 175, 48) {
         return false;
     }
 
@@ -471,6 +494,10 @@ fn is_public_ipv6(addr: Ipv6Addr) -> bool {
     }
 
     if let Some(v4) = ipv4_from_nat64_well_known_prefix(addr) {
+        return is_public_ipv4(v4);
+    }
+
+    if let Some(v4) = ipv4_from_6to4(addr) {
         return is_public_ipv4(v4);
     }
 
@@ -514,6 +541,15 @@ fn ipv4_from_nat64_well_known_prefix(addr: Ipv6Addr) -> Option<Ipv4Addr> {
     // NAT64 Well-Known Prefix (RFC6052): 64:ff9b::/96
     if bytes[..12] == [0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0] {
         return Some(Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15]));
+    }
+    None
+}
+
+fn ipv4_from_6to4(addr: Ipv6Addr) -> Option<Ipv4Addr> {
+    let bytes = addr.octets();
+    // 6to4 (RFC3056; deprecated): 2002::/16 embeds an IPv4 address.
+    if bytes[0] == 0x20 && bytes[1] == 0x02 {
+        return Some(Ipv4Addr::new(bytes[2], bytes[3], bytes[4], bytes[5]));
     }
     None
 }
@@ -658,14 +694,30 @@ mod tests {
         assert!(!is_public_ip(IpAddr::from_str("127.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::ffff:127.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("64:ff9b::7f00:1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("2002:7f00:1::1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("10.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::ffff:10.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("64:ff9b::a00:1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("2002:a00:1::1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("192.0.0.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("64:ff9b::c000:1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("2002:c000:1::1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("192.88.99.1").unwrap()));
+        assert!(!is_public_ip(
+            IpAddr::from_str("64:ff9b::c058:6301").unwrap()
+        ));
+        assert!(!is_public_ip(
+            IpAddr::from_str("2002:c058:6301::1").unwrap()
+        ));
+        assert!(!is_public_ip(IpAddr::from_str("192.31.196.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("192.52.193.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("192.175.48.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("fec0::1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("169.254.1.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::1").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("8.8.8.8").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("::ffff:8.8.8.8").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("64:ff9b::808:808").unwrap()));
+        assert!(is_public_ip(IpAddr::from_str("2002:808:808::1").unwrap()));
     }
 }

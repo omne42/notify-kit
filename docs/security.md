@@ -54,6 +54,12 @@ Webhook 发送本质是“服务端发起 HTTP 请求”。如果 URL 可被不�
 - 校验通过后，会把本次解析结果固定到该次请求的 DNS overrides（降低“校验后被 rebinding”的 TOCTOU 风险）
 - 可通过各 sink 的 `with_public_ip_check(false)` 关闭（Feishu 的 `*_strict` 额外会在构造时也校验一次）
 
+补充说明：
+
+- “公网 IP”的判定是一个**保守**实现：除了私网/loopback/link-local，也会拒绝部分 RFC6890 中的特殊用途网段（例如 `192.0.0.0/24`、`192.88.99.0/24`）。
+- 对 IPv6，会把 `::ffff:x.y.z.w`（IPv4-mapped）以及部分过渡机制前缀按**嵌入的 IPv4**再做一次判定（例如 NAT64 well-known prefix `64:ff9b::/96`、6to4 `2002::/16`）。
+- 该判定不保证覆盖所有 IPv6 过渡/翻译前缀（例如自定义 NAT64 前缀）；在特殊网络环境可能出现误拒/漏判。把 URL 当作安全边界：优先用严格模式（allow-list + path 前缀），必要时只在受信任场景关闭公网 IP 校验。
+
 注意：这是一个“更严格、更保守”的策略；在无网络/DNS 不可用时可能导致发送失败。`*_strict` 构造函数会把校验提前到构造阶段。
 
 ## GitHub API（GitHubCommentSink）
