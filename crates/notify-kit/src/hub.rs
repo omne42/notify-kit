@@ -100,7 +100,7 @@ impl Hub {
             return;
         };
 
-        self.try_notify_spawn(handle, Arc::new(event));
+        self.try_notify_spawn(handle, event);
     }
 
     /// Attempt to enqueue a fire-and-forget notification.
@@ -115,7 +115,7 @@ impl Hub {
             return Err(TryNotifyError::NoTokioRuntime);
         };
 
-        self.try_notify_spawn(handle, Arc::new(event));
+        self.try_notify_spawn(handle, event);
 
         Ok(())
     }
@@ -143,7 +143,7 @@ impl Hub {
         enabled.contains(kind)
     }
 
-    fn try_notify_spawn(&self, handle: tokio::runtime::Handle, event: Arc<Event>) {
+    fn try_notify_spawn(&self, handle: tokio::runtime::Handle, event: Event) {
         let inner = self.inner.clone();
 
         let permit = match inner.inflight.clone().try_acquire_owned() {
@@ -156,6 +156,7 @@ impl Hub {
 
         handle.spawn(async move {
             let _permit = permit;
+            let event = Arc::new(event);
             if let Err(err) = inner.send(event.clone()).await {
                 tracing::warn!(sink = "hub", kind = %event.kind, "notify failed: {err}");
             }
