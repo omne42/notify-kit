@@ -126,7 +126,8 @@ impl Sink for WeComWebhookSink {
             if !status.is_success() {
                 return Err(anyhow::anyhow!(
                     "wecom webhook http error: {status} (response body omitted)"
-                ));
+                )
+                .into());
             }
 
             let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
@@ -135,9 +136,10 @@ impl Sink for WeComWebhookSink {
                 return Ok(());
             }
 
-            Err(anyhow::anyhow!(
-                "wecom api error: errcode={errcode} (response body omitted)"
-            ))
+            Err(
+                anyhow::anyhow!("wecom api error: errcode={errcode} (response body omitted)")
+                    .into(),
+            )
         })
     }
 }

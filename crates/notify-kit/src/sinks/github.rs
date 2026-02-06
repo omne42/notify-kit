@@ -89,10 +89,10 @@ impl GitHubCommentSink {
         validate_github_identifier("owner", &config.owner)?;
         validate_github_identifier("repo", &config.repo)?;
         if config.issue_number == 0 {
-            return Err(anyhow::anyhow!("github issue_number must be > 0"));
+            return Err(anyhow::anyhow!("github issue_number must be > 0").into());
         }
         if config.token.trim().is_empty() {
-            return Err(anyhow::anyhow!("github token must not be empty"));
+            return Err(anyhow::anyhow!("github token must not be empty").into());
         }
 
         let api_url = build_issue_comment_url(&config.owner, &config.repo, config.issue_number)?;
@@ -118,16 +118,16 @@ impl GitHubCommentSink {
 fn validate_github_identifier(kind: &'static str, value: &str) -> crate::Result<()> {
     let value = value.trim();
     if value.is_empty() {
-        return Err(anyhow::anyhow!("github {kind} must not be empty"));
+        return Err(anyhow::anyhow!("github {kind} must not be empty").into());
     }
     if value.contains('/') {
-        return Err(anyhow::anyhow!("github {kind} must not contain '/'"));
+        return Err(anyhow::anyhow!("github {kind} must not contain '/'").into());
     }
     if !value
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
     {
-        return Err(anyhow::anyhow!("github {kind} contains invalid characters"));
+        return Err(anyhow::anyhow!("github {kind} contains invalid characters").into());
     }
     Ok(())
 }
@@ -179,9 +179,10 @@ impl Sink for GitHubCommentSink {
                 return Ok(());
             }
 
-            Err(anyhow::anyhow!(
-                "github comment http error: {status} (response body omitted)"
-            ))
+            Err(
+                anyhow::anyhow!("github comment http error: {status} (response body omitted)")
+                    .into(),
+            )
         })
     }
 }

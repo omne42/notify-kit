@@ -85,7 +85,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: `decode json failed` 错误现在会保留底层解析错误信息（便于排障）。
 - Webhook/API sinks: URL path 前缀校验改为“段边界匹配”（例如 `/send` 不再匹配 `/sendMessage`），减少误放行。
 - Webhook/API sinks: DNS 解析结果去重改为 `HashSet`（避免 O(n²) 扫描）。
-- API: 公共签名统一使用 `notify_kit::Result` / `notify_kit::Error`（避免对外暴露 `anyhow::Result` 路径）。
+- API: 公共签名统一使用 `notify_kit::Result` / `notify_kit::Error`；其中 `notify_kit::Error` 现在是对 `anyhow::Error` 的薄封装（避免在公共 API 中暴露 `anyhow` 类型）。
 - Webhook/API sinks: 收敛严格模式下的同步 DNS 预检实现，移除 per-host inflight/cache（仍保持有界并发与超时）。
 - Webhook/API sinks: 严格模式同步 DNS 预检在 thread spawn 失败时会保留底层错误信息（便于排障）。
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：严格模式下禁止关闭公网 IP 校验。

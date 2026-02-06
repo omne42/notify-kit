@@ -96,7 +96,7 @@ impl FeishuWebhookSink {
     ) -> crate::Result<Self> {
         let secret = secret.into();
         if secret.trim().is_empty() {
-            return Err(anyhow::anyhow!("feishu secret must not be empty"));
+            return Err(anyhow::anyhow!("feishu secret must not be empty").into());
         }
         Self::new_internal(config, Some(secret), false)
     }
@@ -107,7 +107,7 @@ impl FeishuWebhookSink {
     ) -> crate::Result<Self> {
         let secret = secret.into();
         if secret.trim().is_empty() {
-            return Err(anyhow::anyhow!("feishu secret must not be empty"));
+            return Err(anyhow::anyhow!("feishu secret must not be empty").into());
         }
         Self::new_internal(config, Some(secret), true)
     }
@@ -119,9 +119,7 @@ impl FeishuWebhookSink {
     ) -> crate::Result<Self> {
         let enforce_public_ip = config.enforce_public_ip;
         if validate_public_ip_at_construction && !enforce_public_ip {
-            return Err(anyhow::anyhow!(
-                "feishu strict mode requires public ip check"
-            ));
+            return Err(anyhow::anyhow!("feishu strict mode requires public ip check").into());
         }
         let webhook_url = parse_and_validate_https_url(
             &config.webhook_url,
@@ -208,7 +206,8 @@ impl Sink for FeishuWebhookSink {
             if !status.is_success() {
                 return Err(anyhow::anyhow!(
                     "feishu webhook http error: {status} (response body omitted)"
-                ));
+                )
+                .into());
             }
 
             let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
@@ -220,9 +219,7 @@ impl Sink for FeishuWebhookSink {
                 return Ok(());
             }
 
-            Err(anyhow::anyhow!(
-                "feishu api error: code={code} (response body omitted)"
-            ))
+            Err(anyhow::anyhow!("feishu api error: code={code} (response body omitted)").into())
         })
     }
 }

@@ -125,7 +125,8 @@ impl Hub {
             return Ok(());
         }
 
-        tokio::runtime::Handle::try_current().map_err(|_| TryNotifyError::NoTokioRuntime)?;
+        tokio::runtime::Handle::try_current()
+            .map_err(|_| anyhow::Error::from(TryNotifyError::NoTokioRuntime))?;
         let _permit = self
             .inner
             .inflight
@@ -176,18 +177,18 @@ impl HubInner {
             let handle = tokio::spawn(async move {
                 match tokio::time::timeout(timeout, sink.send(&event)).await {
                     Ok(inner) => inner,
-                    Err(_) => Err(anyhow::anyhow!("timeout after {timeout:?}")),
+                    Err(_) => Err(anyhow::anyhow!("timeout after {timeout:?}").into()),
                 }
             });
             handles.push((name, handle));
         }
 
-        let mut failures: Vec<(&'static str, anyhow::Error)> = Vec::new();
+        let mut failures: Vec<(&'static str, crate::Error)> = Vec::new();
         for (name, handle) in handles {
             match handle.await {
                 Ok(Ok(())) => {}
                 Ok(Err(err)) => failures.push((name, err)),
-                Err(err) => failures.push((name, err.into())),
+                Err(err) => failures.push((name, anyhow::Error::from(err).into())),
             }
         }
 
@@ -199,7 +200,7 @@ impl HubInner {
         for (name, err) in failures {
             msg.push_str(&format!("\n- {name}: {err:#}"));
         }
-        Err(anyhow::anyhow!(msg))
+        Err(anyhow::anyhow!(msg).into())
     }
 }
 
@@ -237,7 +238,7 @@ mod tests {
             Box::pin(async move {
                 match self.behavior {
                     TestSinkBehavior::Ok => Ok(()),
-                    TestSinkBehavior::Err => Err(anyhow::anyhow!("boom")),
+                    TestSinkBehavior::Err => Err(anyhow::anyhow!("boom").into()),
                     TestSinkBehavior::Sleep(d) => {
                         tokio::time::sleep(d).await;
                         Ok(())

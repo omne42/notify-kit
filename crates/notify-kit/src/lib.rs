@@ -1,10 +1,11 @@
 #![forbid(unsafe_code)]
 
+mod error;
 mod event;
 mod hub;
 mod sinks;
 
-pub type Error = anyhow::Error;
+pub use crate::error::Error;
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub use crate::event::{Event, Severity};

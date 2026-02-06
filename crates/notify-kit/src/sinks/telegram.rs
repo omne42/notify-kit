@@ -73,10 +73,10 @@ impl std::fmt::Debug for TelegramBotSink {
 impl TelegramBotSink {
     pub fn new(config: TelegramBotConfig) -> crate::Result<Self> {
         if config.bot_token.trim().is_empty() {
-            return Err(anyhow::anyhow!("telegram bot_token must not be empty"));
+            return Err(anyhow::anyhow!("telegram bot_token must not be empty").into());
         }
         if config.chat_id.trim().is_empty() {
-            return Err(anyhow::anyhow!("telegram chat_id must not be empty"));
+            return Err(anyhow::anyhow!("telegram chat_id must not be empty").into());
         }
 
         let mut api_url = reqwest::Url::parse(TELEGRAM_API_BASE)
@@ -126,7 +126,8 @@ impl Sink for TelegramBotSink {
             if !status.is_success() {
                 return Err(anyhow::anyhow!(
                     "telegram http error: {status} (response body omitted)"
-                ));
+                )
+                .into());
             }
 
             let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
@@ -143,22 +144,22 @@ impl Sink for TelegramBotSink {
                 if !description.is_empty() {
                     return Err(anyhow::anyhow!(
                         "telegram api error: {code}, description={description} (response body omitted)"
-                    ));
+                    )
+                    .into());
                 }
-                return Err(anyhow::anyhow!(
-                    "telegram api error: {code} (response body omitted)"
-                ));
+                return Err(
+                    anyhow::anyhow!("telegram api error: {code} (response body omitted)").into(),
+                );
             }
 
             if !description.is_empty() {
                 return Err(anyhow::anyhow!(
                     "telegram api error: description={description} (response body omitted)"
-                ));
+                )
+                .into());
             }
 
-            Err(anyhow::anyhow!(
-                "telegram api error (response body omitted)"
-            ))
+            Err(anyhow::anyhow!("telegram api error (response body omitted)").into())
         })
     }
 }

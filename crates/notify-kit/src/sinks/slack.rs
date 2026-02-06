@@ -125,11 +125,13 @@ impl Sink for SlackWebhookSink {
                     if status.is_success() {
                         return Err(anyhow::anyhow!(
                             "slack webhook api error: {status} (failed to read response body: {err})"
-                        ));
+                        )
+                        .into());
                     }
                     return Err(anyhow::anyhow!(
                         "slack webhook http error: {status} (failed to read response body: {err})"
-                    ));
+                    )
+                    .into());
                 }
             };
             let body = body.trim();
@@ -139,12 +141,14 @@ impl Sink for SlackWebhookSink {
                 if summary.is_empty() {
                     return Err(anyhow::anyhow!(
                         "slack webhook http error: {status} (response body omitted)"
-                    ));
+                    )
+                    .into());
                 }
 
                 return Err(anyhow::anyhow!(
                     "slack webhook http error: {status}, response={summary} (response body omitted)"
-                ));
+                )
+                .into());
             }
 
             if body.is_empty() || body.eq_ignore_ascii_case("ok") {
@@ -154,7 +158,8 @@ impl Sink for SlackWebhookSink {
             let summary = truncate_chars(body, 200);
             Err(anyhow::anyhow!(
                 "slack webhook api error: response={summary} (response body omitted)"
-            ))
+            )
+            .into())
         })
     }
 }

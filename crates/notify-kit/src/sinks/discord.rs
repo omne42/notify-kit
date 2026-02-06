@@ -130,18 +130,21 @@ impl Sink for DiscordWebhookSink {
                 Err(err) => {
                     return Err(anyhow::anyhow!(
                         "discord webhook http error: {status} (failed to read response body: {err})"
-                    ));
+                    )
+                    .into());
                 }
             };
             let summary = truncate_chars(body.trim(), 200);
             if summary.is_empty() {
                 return Err(anyhow::anyhow!(
                     "discord webhook http error: {status} (response body omitted)"
-                ));
+                )
+                .into());
             }
             Err(anyhow::anyhow!(
                 "discord webhook http error: {status}, response={summary} (response body omitted)"
-            ))
+            )
+            .into())
         })
     }
 }

@@ -98,7 +98,7 @@ impl DingTalkWebhookSink {
 
         if let Some(secret) = config.secret.as_deref() {
             if secret.trim().is_empty() {
-                return Err(anyhow::anyhow!("dingtalk secret must not be empty"));
+                return Err(anyhow::anyhow!("dingtalk secret must not be empty").into());
             }
         }
 
@@ -161,7 +161,8 @@ impl Sink for DingTalkWebhookSink {
             if !status.is_success() {
                 return Err(anyhow::anyhow!(
                     "dingtalk webhook http error: {status} (response body omitted)"
-                ));
+                )
+                .into());
             }
 
             let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
@@ -170,9 +171,10 @@ impl Sink for DingTalkWebhookSink {
                 return Ok(());
             }
 
-            Err(anyhow::anyhow!(
-                "dingtalk api error: errcode={errcode} (response body omitted)"
-            ))
+            Err(
+                anyhow::anyhow!("dingtalk api error: errcode={errcode} (response body omitted)")
+                    .into(),
+            )
         })
     }
 }

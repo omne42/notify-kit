@@ -142,29 +142,29 @@ fn build_http_client_builder(timeout: Duration) -> reqwest::ClientBuilder {
 pub(crate) fn build_http_client(timeout: Duration) -> crate::Result<reqwest::Client> {
     build_http_client_builder(timeout)
         .build()
-        .map_err(|err| anyhow::anyhow!("build reqwest client: {err}"))
+        .map_err(|err| anyhow::anyhow!("build reqwest client: {err}").into())
 }
 
 pub(crate) fn parse_and_validate_https_url_basic(url_str: &str) -> crate::Result<reqwest::Url> {
     let url = reqwest::Url::parse(url_str).map_err(|err| anyhow::anyhow!("invalid url: {err}"))?;
 
     if url.scheme() != "https" {
-        return Err(anyhow::anyhow!("url must use https"));
+        return Err(anyhow::anyhow!("url must use https").into());
     }
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(anyhow::anyhow!("url must not contain credentials"));
+        return Err(anyhow::anyhow!("url must not contain credentials").into());
     }
 
     let Some(host) = url.host_str() else {
-        return Err(anyhow::anyhow!("url must have a host"));
+        return Err(anyhow::anyhow!("url must have a host").into());
     };
     if host.eq_ignore_ascii_case("localhost") || host.parse::<std::net::IpAddr>().is_ok() {
-        return Err(anyhow::anyhow!("url host is not allowed"));
+        return Err(anyhow::anyhow!("url host is not allowed").into());
     }
 
     if let Some(port) = url.port() {
         if port != 443 {
-            return Err(anyhow::anyhow!("url port is not allowed"));
+            return Err(anyhow::anyhow!("url port is not allowed").into());
         }
     }
 
@@ -177,14 +177,14 @@ pub(crate) fn parse_and_validate_https_url(
 ) -> crate::Result<reqwest::Url> {
     let url = parse_and_validate_https_url_basic(url_str)?;
     let Some(host) = url.host_str() else {
-        return Err(anyhow::anyhow!("url must have a host"));
+        return Err(anyhow::anyhow!("url must have a host").into());
     };
 
     if !allowed_hosts
         .iter()
         .any(|allowed| host.eq_ignore_ascii_case(allowed))
     {
-        return Err(anyhow::anyhow!("url host is not allowed"));
+        return Err(anyhow::anyhow!("url host is not allowed").into());
     }
 
     Ok(url)
@@ -227,20 +227,21 @@ pub(crate) async fn send_reqwest(
             "{context} request failed ({})",
             sanitize_reqwest_error(&err)
         )
+        .into()
     })
 }
 
 pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> crate::Result<()> {
     let path = url.path();
     if prefix.is_empty() {
-        return Err(anyhow::anyhow!("url path is not allowed"));
+        return Err(anyhow::anyhow!("url path is not allowed").into());
     }
 
     if prefix.ends_with('/') {
         if path.starts_with(prefix) {
             return Ok(());
         }
-        return Err(anyhow::anyhow!("url path is not allowed"));
+        return Err(anyhow::anyhow!("url path is not allowed").into());
     }
 
     if path == prefix {
@@ -248,14 +249,14 @@ pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> crat
     }
 
     let Some(next) = path.as_bytes().get(prefix.len()) else {
-        return Err(anyhow::anyhow!("url path is not allowed"));
+        return Err(anyhow::anyhow!("url path is not allowed").into());
     };
 
     if path.starts_with(prefix) && *next == b'/' {
         return Ok(());
     }
 
-    Err(anyhow::anyhow!("url path is not allowed"))
+    Err(anyhow::anyhow!("url path is not allowed").into())
 }
 
 pub(crate) fn validate_url_resolves_to_public_ip(
@@ -271,12 +272,12 @@ fn resolve_url_to_public_addrs_with_timeout(
     timeout: Duration,
 ) -> crate::Result<Vec<SocketAddr>> {
     let Some(host) = url.host_str() else {
-        return Err(anyhow::anyhow!("url must have a host"));
+        return Err(anyhow::anyhow!("url must have a host").into());
     };
 
     let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
     if dns_timeout == Duration::ZERO {
-        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()));
+        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
     }
 
     let deadline = Instant::now() + dns_timeout;
@@ -286,7 +287,7 @@ fn resolve_url_to_public_addrs_with_timeout(
         .clone()
         .acquire_timeout(remaining)
     else {
-        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()));
+        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
     };
 
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
@@ -302,16 +303,16 @@ fn resolve_url_to_public_addrs_with_timeout(
 
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining == Duration::ZERO {
-        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()));
+        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
     }
 
     match rx.recv_timeout(remaining) {
         Ok(res) => res,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()))
+            Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into())
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err(anyhow::anyhow!("dns lookup failed"))
+            Err(anyhow::anyhow!("dns lookup failed").into())
         }
     }
 }
@@ -327,7 +328,7 @@ fn resolve_host_to_public_addrs(host: &str) -> crate::Result<Vec<SocketAddr>> {
     for addr in addrs {
         seen += 1;
         if !is_public_ip(addr.ip()) {
-            return Err(anyhow::anyhow!("resolved ip is not allowed"));
+            return Err(anyhow::anyhow!("resolved ip is not allowed").into());
         }
         if uniq.insert(addr) {
             out.push(addr);
@@ -335,7 +336,7 @@ fn resolve_host_to_public_addrs(host: &str) -> crate::Result<Vec<SocketAddr>> {
     }
 
     if seen == 0 {
-        return Err(anyhow::anyhow!("dns lookup failed"));
+        return Err(anyhow::anyhow!("dns lookup failed").into());
     }
 
     Ok(out)
@@ -370,7 +371,7 @@ pub(crate) async fn build_http_client_pinned_async(
     build_http_client_builder(timeout)
         .resolve_to_addrs(&host, &addrs)
         .build()
-        .map_err(|err| anyhow::anyhow!("build reqwest client: {err}"))
+        .map_err(|err| anyhow::anyhow!("build reqwest client: {err}").into())
 }
 
 pub(crate) async fn select_http_client(
@@ -580,7 +581,7 @@ pub(crate) async fn read_json_body_limited(
     max_bytes: usize,
 ) -> crate::Result<serde_json::Value> {
     let buf = read_body_bytes_limited(resp, max_bytes).await?;
-    serde_json::from_slice(&buf).map_err(|err| anyhow::anyhow!("decode json failed: {err}"))
+    serde_json::from_slice(&buf).map_err(|err| anyhow::anyhow!("decode json failed: {err}").into())
 }
 
 pub(crate) async fn read_text_body_limited(
@@ -603,16 +604,12 @@ async fn read_body_bytes_limited(
     max_bytes: usize,
 ) -> crate::Result<Vec<u8>> {
     if max_bytes == 0 {
-        return Err(anyhow::anyhow!(
-            "response body too large (response body omitted)"
-        ));
+        return Err(anyhow::anyhow!("response body too large (response body omitted)").into());
     }
 
     if let Some(len) = resp.content_length() {
         if len > max_bytes as u64 {
-            return Err(anyhow::anyhow!(
-                "response body too large (response body omitted)"
-            ));
+            return Err(anyhow::anyhow!("response body too large (response body omitted)").into());
         }
     }
 
@@ -624,9 +621,7 @@ async fn read_body_bytes_limited(
         )
     })? {
         if buf.len() + chunk.len() > max_bytes {
-            return Err(anyhow::anyhow!(
-                "response body too large (response body omitted)"
-            ));
+            return Err(anyhow::anyhow!("response body too large (response body omitted)").into());
         }
         buf.extend_from_slice(&chunk);
     }

@@ -93,7 +93,7 @@ impl std::fmt::Debug for BarkSink {
 impl BarkSink {
     pub fn new(config: BarkConfig) -> crate::Result<Self> {
         if config.device_key.trim().is_empty() {
-            return Err(anyhow::anyhow!("bark device_key must not be empty"));
+            return Err(anyhow::anyhow!("bark device_key must not be empty").into());
         }
 
         let api_url =
@@ -168,18 +168,21 @@ impl Sink for BarkSink {
                     Err(err) => {
                         return Err(anyhow::anyhow!(
                             "bark http error: {status} (failed to read response body: {err})"
-                        ));
+                        )
+                        .into());
                     }
                 };
                 let summary = truncate_chars(body.trim(), 200);
                 if summary.is_empty() {
                     return Err(anyhow::anyhow!(
                         "bark http error: {status} (response body omitted)"
-                    ));
+                    )
+                    .into());
                 }
                 return Err(anyhow::anyhow!(
                     "bark http error: {status}, response={summary} (response body omitted)"
-                ));
+                )
+                .into());
             }
 
             let content_type_is_json = resp
@@ -193,7 +196,8 @@ impl Sink for BarkSink {
                 Err(err) => {
                     return Err(anyhow::anyhow!(
                         "bark api error: {status} (failed to read response body: {err})"
-                    ));
+                    )
+                    .into());
                 }
             };
             let body = body.trim();
@@ -219,13 +223,14 @@ impl Sink for BarkSink {
             let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
             let message = truncate_chars(message, 200);
             if message.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "bark api error: code={code} (response body omitted)"
-                ));
+                return Err(
+                    anyhow::anyhow!("bark api error: code={code} (response body omitted)").into(),
+                );
             }
             Err(anyhow::anyhow!(
                 "bark api error: code={code}, message={message} (response body omitted)"
-            ))
+            )
+            .into())
         })
     }
 }

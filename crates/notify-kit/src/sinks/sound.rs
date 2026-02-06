@@ -74,7 +74,7 @@ impl SoundSink {
             .ok_or_else(|| anyhow::anyhow!("sound command argv is empty"))?;
 
         if program.trim().is_empty() {
-            return Err(anyhow::anyhow!("sound command program is empty"));
+            return Err(anyhow::anyhow!("sound command program is empty").into());
         }
 
         let child = std::process::Command::new(program)

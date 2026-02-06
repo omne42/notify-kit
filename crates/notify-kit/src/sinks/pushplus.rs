@@ -121,7 +121,7 @@ impl std::fmt::Debug for PushPlusSink {
 impl PushPlusSink {
     pub fn new(config: PushPlusConfig) -> crate::Result<Self> {
         if config.token.trim().is_empty() {
-            return Err(anyhow::anyhow!("pushplus token must not be empty"));
+            return Err(anyhow::anyhow!("pushplus token must not be empty").into());
         }
 
         let api_url = parse_and_validate_https_url(
@@ -214,7 +214,8 @@ impl Sink for PushPlusSink {
             if !status.is_success() {
                 return Err(anyhow::anyhow!(
                     "pushplus http error: {status} (response body omitted)"
-                ));
+                )
+                .into());
             }
 
             let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
@@ -228,7 +229,8 @@ impl Sink for PushPlusSink {
             let msg = truncate_chars(msg, 200);
             Err(anyhow::anyhow!(
                 "pushplus api error: code={code}, msg={msg} (response body omitted)"
-            ))
+            )
+            .into())
         })
     }
 }

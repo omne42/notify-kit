@@ -89,7 +89,7 @@ impl std::fmt::Debug for ServerChanSink {
 impl ServerChanSink {
     pub fn new(config: ServerChanConfig) -> crate::Result<Self> {
         if config.send_key.trim().is_empty() {
-            return Err(anyhow::anyhow!("serverchan send_key must not be empty"));
+            return Err(anyhow::anyhow!("serverchan send_key must not be empty").into());
         }
 
         let (kind, api_url) = build_serverchan_url(&config.send_key)?;
@@ -132,11 +132,11 @@ fn build_serverchan_url(send_key: &str) -> crate::Result<(ServerChanKind, reqwes
 
     if let Some(rest) = send_key.strip_prefix("sctp") {
         let Some(pos) = rest.find('t') else {
-            return Err(anyhow::anyhow!("invalid serverchan send_key"));
+            return Err(anyhow::anyhow!("invalid serverchan send_key").into());
         };
         let (uid_str, _tail) = rest.split_at(pos);
         if uid_str.is_empty() || !uid_str.chars().all(|ch| ch.is_ascii_digit()) {
-            return Err(anyhow::anyhow!("invalid serverchan send_key"));
+            return Err(anyhow::anyhow!("invalid serverchan send_key").into());
         }
         let uid: u64 = uid_str
             .parse()
@@ -181,7 +181,8 @@ impl Sink for ServerChanSink {
             if !status.is_success() {
                 return Err(anyhow::anyhow!(
                     "serverchan http error: {status} (response body omitted)"
-                ));
+                )
+                .into());
             }
 
             let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
@@ -193,9 +194,7 @@ impl Sink for ServerChanSink {
                 return Ok(());
             }
 
-            Err(anyhow::anyhow!(
-                "serverchan api error: code={code} (response body omitted)"
-            ))
+            Err(anyhow::anyhow!("serverchan api error: code={code} (response body omitted)").into())
         })
     }
 }

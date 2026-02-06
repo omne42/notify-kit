@@ -124,14 +124,13 @@ impl std::fmt::Debug for GenericWebhookSink {
 impl GenericWebhookSink {
     pub fn new(config: GenericWebhookConfig) -> crate::Result<Self> {
         if config.payload_field.trim().is_empty() {
-            return Err(anyhow::anyhow!(
-                "generic webhook payload_field must not be empty"
-            ));
+            return Err(anyhow::anyhow!("generic webhook payload_field must not be empty").into());
         }
         if !config.enforce_public_ip && config.allowed_hosts.is_empty() {
             return Err(anyhow::anyhow!(
                 "generic webhook disabling public ip check requires allowed_hosts"
-            ));
+            )
+            .into());
         }
 
         let url = parse_and_validate_https_url_basic(&config.url)?;
@@ -141,14 +140,14 @@ impl GenericWebhookSink {
 
         if !config.allowed_hosts.is_empty() {
             let Some(host) = url.host_str() else {
-                return Err(anyhow::anyhow!("url must have a host"));
+                return Err(anyhow::anyhow!("url must have a host").into());
             };
             let allowed = config
                 .allowed_hosts
                 .iter()
                 .any(|h| host.eq_ignore_ascii_case(h));
             if !allowed {
-                return Err(anyhow::anyhow!("url host is not allowed"));
+                return Err(anyhow::anyhow!("url host is not allowed").into());
             }
         }
 
@@ -165,49 +164,44 @@ impl GenericWebhookSink {
 
     pub fn new_strict(config: GenericWebhookConfig) -> crate::Result<Self> {
         if !config.enforce_public_ip {
-            return Err(anyhow::anyhow!(
-                "generic webhook strict mode requires public ip check"
-            ));
+            return Err(
+                anyhow::anyhow!("generic webhook strict mode requires public ip check").into(),
+            );
         }
         if config.allowed_hosts.is_empty() {
-            return Err(anyhow::anyhow!(
-                "generic webhook strict mode requires allowed_hosts"
-            ));
+            return Err(
+                anyhow::anyhow!("generic webhook strict mode requires allowed_hosts").into(),
+            );
         }
         let Some(path_prefix) = config.path_prefix.as_deref() else {
-            return Err(anyhow::anyhow!(
-                "generic webhook strict mode requires path_prefix"
-            ));
+            return Err(anyhow::anyhow!("generic webhook strict mode requires path_prefix").into());
         };
         let path_prefix = path_prefix.trim();
         if path_prefix.is_empty() || !path_prefix.starts_with('/') {
             return Err(anyhow::anyhow!(
                 "generic webhook strict mode requires path_prefix starting with '/'"
-            ));
+            )
+            .into());
         }
         if config.allowed_hosts.iter().any(|h| h.trim().is_empty()) {
-            return Err(anyhow::anyhow!(
-                "generic webhook allowed_hosts must not be empty"
-            ));
+            return Err(anyhow::anyhow!("generic webhook allowed_hosts must not be empty").into());
         }
         if config.payload_field.trim().is_empty() {
-            return Err(anyhow::anyhow!(
-                "generic webhook payload_field must not be empty"
-            ));
+            return Err(anyhow::anyhow!("generic webhook payload_field must not be empty").into());
         }
 
         let url = parse_and_validate_https_url_basic(&config.url)?;
         validate_url_path_prefix(&url, path_prefix)?;
 
         let Some(host) = url.host_str() else {
-            return Err(anyhow::anyhow!("url must have a host"));
+            return Err(anyhow::anyhow!("url must have a host").into());
         };
         let allowed = config
             .allowed_hosts
             .iter()
             .any(|h| host.eq_ignore_ascii_case(h));
         if !allowed {
-            return Err(anyhow::anyhow!("url host is not allowed"));
+            return Err(anyhow::anyhow!("url host is not allowed").into());
         }
 
         let client = build_http_client(config.timeout)?;
@@ -260,18 +254,21 @@ impl Sink for GenericWebhookSink {
                 Err(err) => {
                     return Err(anyhow::anyhow!(
                         "generic webhook http error: {status} (failed to read response body: {err})"
-                    ));
+                    )
+                    .into());
                 }
             };
             let summary = truncate_chars(body.trim(), 200);
             if summary.is_empty() {
                 return Err(anyhow::anyhow!(
                     "generic webhook http error: {status} (response body omitted)"
-                ));
+                )
+                .into());
             }
             Err(anyhow::anyhow!(
                 "generic webhook http error: {status}, response={summary} (response body omitted)"
-            ))
+            )
+            .into())
         })
     }
 }
