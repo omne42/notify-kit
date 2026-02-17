@@ -135,9 +135,23 @@ impl DingTalkWebhookSink {
         let sign = hmac_sha256_base64(secret, &string_to_sign)?;
 
         let mut url = self.webhook_url.clone();
-        url.query_pairs_mut()
-            .append_pair("timestamp", &timestamp)
-            .append_pair("sign", &sign);
+        let retained_pairs: Vec<(String, String)> = url
+            .query_pairs()
+            .filter_map(|(key, value)| match key.as_ref() {
+                "timestamp" | "sign" => None,
+                _ => Some((key.into_owned(), value.into_owned())),
+            })
+            .collect();
+
+        {
+            let mut query = url.query_pairs_mut();
+            query.clear();
+            for (key, value) in &retained_pairs {
+                query.append_pair(key, value);
+            }
+            query.append_pair("timestamp", &timestamp);
+            query.append_pair("sign", &sign);
+        }
         Ok(url)
     }
 }
@@ -235,5 +249,33 @@ mod tests {
         assert!(!sink_dbg.contains("my_secret"), "{sink_dbg}");
         assert!(sink_dbg.contains("oapi.dingtalk.com"), "{sink_dbg}");
         assert!(sink_dbg.contains("<redacted>"), "{sink_dbg}");
+    }
+
+    #[test]
+    fn signing_overwrites_existing_timestamp_and_sign_params() {
+        let cfg = DingTalkWebhookConfig::new(
+            "https://oapi.dingtalk.com/robot/send?access_token=x&timestamp=old&sign=old-sign",
+        )
+        .with_secret("s3cr3t");
+        let sink = DingTalkWebhookSink::new(cfg).expect("build sink");
+        let url = sink
+            .webhook_url_with_signature()
+            .expect("build signed webhook url");
+
+        let mut timestamp_count = 0usize;
+        let mut sign_count = 0usize;
+        let mut access_token_values = Vec::new();
+        for (key, value) in url.query_pairs() {
+            match key.as_ref() {
+                "timestamp" => timestamp_count += 1,
+                "sign" => sign_count += 1,
+                "access_token" => access_token_values.push(value.into_owned()),
+                _ => {}
+            }
+        }
+
+        assert_eq!(timestamp_count, 1);
+        assert_eq!(sign_count, 1);
+        assert_eq!(access_token_values, vec!["x".to_string()]);
     }
 }

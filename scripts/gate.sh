@@ -73,6 +73,31 @@ EOF
   )
 fi
 
+# Optional: run bot-local check scripts when present.
+if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 && [[ -d "$repo_root/bots" ]]; then
+  bot_packages=()
+  while IFS= read -r f; do
+    bot_packages+=("$f")
+  done < <(find "$repo_root/bots" -maxdepth 2 -type f -name package.json -print 2>/dev/null)
+
+  ran_bot_checks=0
+  for pkg in "${bot_packages[@]}"; do
+    if node -e 'const fs=require("fs");const p=process.argv[1];try{const j=JSON.parse(fs.readFileSync(p,"utf8"));process.exit(j?.scripts && typeof j.scripts.check==="string" ? 0 : 1)}catch{process.exit(2)}' "$pkg"; then
+      pkg_dir="$(dirname "$pkg")"
+      echo "gate: node (npm run check in ${pkg_dir#$repo_root/})" >&2
+      (
+        cd "$repo_root"
+        npm --prefix "$pkg_dir" run -s check
+      )
+      ran_bot_checks=1
+    fi
+  done
+
+  if [[ "$ran_bot_checks" -eq 0 ]]; then
+    echo "gate: node (no bot package check scripts found; skipped)" >&2
+  fi
+fi
+
 # Optional: validate example bots syntax without installing deps.
 if command -v node >/dev/null 2>&1 && [[ -d "$repo_root/bots" ]]; then
   bot_entrypoints=()

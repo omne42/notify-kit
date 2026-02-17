@@ -1,6 +1,8 @@
 use std::io::Write;
 #[cfg(not(feature = "sound-command"))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "sound-command")]
+use tokio::process::Command;
 
 use crate::Event;
 use crate::event::Severity;
@@ -46,29 +48,7 @@ impl SoundSink {
     }
 
     #[cfg(feature = "sound-command")]
-    fn wait_sound_command(mut child: std::process::Child, program: String) {
-        match child.wait() {
-            Ok(status) if status.success() => {}
-            Ok(status) => {
-                tracing::warn!(
-                    sink = "sound",
-                    program = %program,
-                    status = ?status,
-                    "sound command exited non-zero"
-                );
-            }
-            Err(err) => {
-                tracing::warn!(
-                    sink = "sound",
-                    program = %program,
-                    "wait sound command failed: {err}"
-                );
-            }
-        }
-    }
-
-    #[cfg(feature = "sound-command")]
-    fn send_command(command_argv: &[String]) -> crate::Result<()> {
+    async fn send_command(command_argv: &[String]) -> crate::Result<()> {
         let (program, args) = command_argv
             .split_first()
             .ok_or_else(|| anyhow::anyhow!("sound command argv is empty"))?;
@@ -77,16 +57,24 @@ impl SoundSink {
             return Err(anyhow::anyhow!("sound command program is empty").into());
         }
 
-        let child = std::process::Command::new(program)
+        let mut child = Command::new(program)
             .args(args)
+            .kill_on_drop(true)
             .spawn()
             .map_err(|err| anyhow::anyhow!("spawn sound command {program}: {err}"))?;
 
-        let program = program.to_string();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn_blocking(move || Self::wait_sound_command(child, program));
-        } else {
-            Self::wait_sound_command(child, program);
+        let status = child
+            .wait()
+            .await
+            .map_err(|err| anyhow::anyhow!("wait sound command {program}: {err}"))?;
+
+        if !status.success() {
+            tracing::warn!(
+                sink = "sound",
+                program = %program,
+                status = ?status,
+                "sound command exited non-zero"
+            );
         }
         Ok(())
     }
@@ -102,7 +90,7 @@ impl Sink for SoundSink {
             if let Some(_argv) = self.command_argv.as_deref() {
                 #[cfg(feature = "sound-command")]
                 {
-                    Self::send_command(_argv)?;
+                    Self::send_command(_argv).await?;
                     return Ok(());
                 }
 
@@ -133,14 +121,30 @@ mod tests {
     #[cfg(feature = "sound-command")]
     #[test]
     fn send_command_rejects_empty_argv() {
-        let err = SoundSink::send_command(&[]).expect_err("expected error");
-        assert!(err.to_string().contains("argv is empty"), "{err:#}");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime");
+        rt.block_on(async {
+            let err = SoundSink::send_command(&[])
+                .await
+                .expect_err("expected error");
+            assert!(err.to_string().contains("argv is empty"), "{err:#}");
+        });
     }
 
     #[cfg(feature = "sound-command")]
     #[test]
     fn send_command_rejects_empty_program() {
-        let err = SoundSink::send_command(&[String::from("  ")]).expect_err("expected error");
-        assert!(err.to_string().contains("program is empty"), "{err:#}");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime");
+        rt.block_on(async {
+            let err = SoundSink::send_command(&[String::from("  ")])
+                .await
+                .expect_err("expected error");
+            assert!(err.to_string().contains("program is empty"), "{err:#}");
+        });
     }
 }

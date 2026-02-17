@@ -5,7 +5,7 @@ use crate::sinks::crypto::hmac_sha256_base64;
 use crate::sinks::http::{
     DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
     read_json_body_limited, redact_url, redact_url_str, select_http_client, send_reqwest,
-    validate_url_path_prefix, validate_url_resolves_to_public_ip,
+    validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
@@ -90,6 +90,10 @@ impl FeishuWebhookSink {
         Self::new_internal(config, None, true)
     }
 
+    pub async fn new_strict_async(config: FeishuWebhookConfig) -> crate::Result<Self> {
+        Self::new_internal_async(config, None, true).await
+    }
+
     pub fn new_with_secret(
         config: FeishuWebhookConfig,
         secret: impl Into<String>,
@@ -112,6 +116,17 @@ impl FeishuWebhookSink {
         Self::new_internal(config, Some(secret), true)
     }
 
+    pub async fn new_with_secret_strict_async(
+        config: FeishuWebhookConfig,
+        secret: impl Into<String>,
+    ) -> crate::Result<Self> {
+        let secret = secret.into();
+        if secret.trim().is_empty() {
+            return Err(anyhow::anyhow!("feishu secret must not be empty").into());
+        }
+        Self::new_internal_async(config, Some(secret), true).await
+    }
+
     fn new_internal(
         config: FeishuWebhookConfig,
         secret: Option<String>,
@@ -126,10 +141,46 @@ impl FeishuWebhookSink {
             &["open.feishu.cn", "open.larksuite.com"],
         )?;
         validate_url_path_prefix(&webhook_url, "/open-apis/bot/v2/hook/")?;
-        if validate_public_ip_at_construction {
-            validate_url_resolves_to_public_ip(&webhook_url, config.timeout)?;
-        }
         let client = build_http_client(config.timeout)?;
+        if validate_public_ip_at_construction {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                return Err(anyhow::anyhow!(
+                    "feishu strict constructor cannot run inside tokio runtime; use new_strict_async/new_with_secret_strict_async"
+                )
+                .into());
+            }
+            Self::validate_public_ip_at_construction_sync(&client, config.timeout, &webhook_url)?;
+        }
+        Ok(Self {
+            webhook_url,
+            client,
+            timeout: config.timeout,
+            secret,
+            max_chars: config.max_chars,
+            enforce_public_ip,
+        })
+    }
+
+    async fn new_internal_async(
+        config: FeishuWebhookConfig,
+        secret: Option<String>,
+        validate_public_ip_at_construction: bool,
+    ) -> crate::Result<Self> {
+        let enforce_public_ip = config.enforce_public_ip;
+        if validate_public_ip_at_construction && !enforce_public_ip {
+            return Err(anyhow::anyhow!("feishu strict mode requires public ip check").into());
+        }
+        let webhook_url = parse_and_validate_https_url(
+            &config.webhook_url,
+            &["open.feishu.cn", "open.larksuite.com"],
+        )?;
+        validate_url_path_prefix(&webhook_url, "/open-apis/bot/v2/hook/")?;
+        let client = build_http_client(config.timeout)?;
+        if validate_public_ip_at_construction {
+            select_http_client(&client, config.timeout, &webhook_url, true)
+                .await
+                .map(|_| ())?;
+        }
         Ok(Self {
             webhook_url,
             client,
@@ -161,6 +212,42 @@ impl FeishuWebhookSink {
             obj.insert("sign".to_string(), serde_json::json!(sign));
         }
         serde_json::Value::Object(obj)
+    }
+
+    fn ensure_success_response(body: &serde_json::Value) -> crate::Result<()> {
+        let Some(code) = body["StatusCode"]
+            .as_i64()
+            .or_else(|| body["code"].as_i64())
+        else {
+            return Err(anyhow::anyhow!(
+                "feishu api error: missing status code (response body omitted)"
+            )
+            .into());
+        };
+
+        if code == 0 {
+            return Ok(());
+        }
+
+        Err(anyhow::anyhow!("feishu api error: code={code} (response body omitted)").into())
+    }
+
+    fn validate_public_ip_at_construction_sync(
+        client: &reqwest::Client,
+        timeout: Duration,
+        webhook_url: &reqwest::Url,
+    ) -> crate::Result<()> {
+        let client = client.clone();
+        let webhook_url = webhook_url.clone();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| anyhow::anyhow!("build tokio runtime: {err}"))?;
+        rt.block_on(async move {
+            select_http_client(&client, timeout, &webhook_url, true)
+                .await
+                .map(|_| ())
+        })
     }
 }
 
@@ -211,15 +298,7 @@ impl Sink for FeishuWebhookSink {
             }
 
             let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
-            let code = body["StatusCode"]
-                .as_i64()
-                .or_else(|| body["code"].as_i64())
-                .unwrap_or(0);
-            if code == 0 {
-                return Ok(());
-            }
-
-            Err(anyhow::anyhow!("feishu api error: code={code} (response body omitted)").into())
+            Self::ensure_success_response(&body)
         })
     }
 }
@@ -272,6 +351,20 @@ mod tests {
     }
 
     #[test]
+    fn strict_sync_constructor_rejects_inside_runtime() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime");
+        rt.block_on(async {
+            let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/x");
+            let err =
+                FeishuWebhookSink::new_strict(cfg).expect_err("expected runtime constructor error");
+            assert!(err.to_string().contains("new_strict_async"), "{err:#}");
+        });
+    }
+
+    #[test]
     fn debug_redacts_webhook_url() {
         let url = "https://open.feishu.cn/open-apis/bot/v2/hook/secret_token";
         let cfg = FeishuWebhookConfig::new(url);
@@ -303,5 +396,22 @@ mod tests {
         let text = payload["content"]["text"].as_str().unwrap_or("");
         assert!(text.chars().count() <= 10, "{text}");
         assert!(text.ends_with("..."), "{text}");
+    }
+
+    #[test]
+    fn response_requires_explicit_success_code() {
+        let body = serde_json::json!({});
+        let err =
+            FeishuWebhookSink::ensure_success_response(&body).expect_err("expected missing code");
+        assert!(err.to_string().contains("missing status code"), "{err:#}");
+    }
+
+    #[test]
+    fn response_accepts_zero_code() {
+        let body = serde_json::json!({ "StatusCode": 0 });
+        FeishuWebhookSink::ensure_success_response(&body).expect("expected success");
+
+        let body = serde_json::json!({ "code": 0 });
+        FeishuWebhookSink::ensure_success_response(&body).expect("expected success");
     }
 }

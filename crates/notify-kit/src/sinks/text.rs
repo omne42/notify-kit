@@ -34,15 +34,45 @@ impl TextLimits {
 
 struct LimitedChars {
     max: usize,
-    out: Vec<char>,
+    out: String,
+    out_chars: usize,
     truncated: bool,
+}
+
+fn byte_index_after_n_chars(input: &str, max_chars: usize) -> usize {
+    if max_chars == 0 {
+        return 0;
+    }
+    let mut count = 0usize;
+    for (idx, ch) in input.char_indices() {
+        count += 1;
+        if count == max_chars {
+            return idx + ch.len_utf8();
+        }
+    }
+    input.len()
+}
+
+fn take_prefix_chars(input: &str, max_chars: usize) -> (&str, usize, bool) {
+    if max_chars == 0 {
+        return ("", 0, !input.is_empty());
+    }
+    let mut count = 0usize;
+    for (idx, _) in input.char_indices() {
+        if count == max_chars {
+            return (&input[..idx], count, true);
+        }
+        count += 1;
+    }
+    (input, count, false)
 }
 
 impl LimitedChars {
     fn new(max: usize) -> Self {
         Self {
             max,
-            out: Vec::new(),
+            out: String::with_capacity(max.min(256)),
+            out_chars: 0,
             truncated: false,
         }
     }
@@ -55,32 +85,37 @@ impl LimitedChars {
         if self.truncated || self.max == 0 {
             return;
         }
-        if self.out.len() >= self.max {
+        if self.out_chars >= self.max {
             self.truncated = true;
             return;
         }
         self.out.push(ch);
+        self.out_chars += 1;
     }
 
     fn push_str(&mut self, s: &str) {
         if self.truncated || self.max == 0 {
             return;
         }
-        for ch in s.chars() {
-            if self.out.len() >= self.max {
-                self.truncated = true;
-                break;
-            }
-            self.out.push(ch);
+        let remaining = self.max.saturating_sub(self.out_chars);
+        if remaining == 0 {
+            self.truncated = true;
+            return;
         }
+        let (prefix, chars_taken, was_truncated) = take_prefix_chars(s, remaining);
+        self.out.push_str(prefix);
+        self.out_chars += chars_taken;
+        self.truncated = was_truncated;
     }
 
     fn finish(mut self) -> String {
         if self.truncated && self.max > 3 {
-            self.out.truncate(self.max - 3);
-            self.out.extend(['.', '.', '.']);
+            let keep = self.max - 3;
+            let keep_end = byte_index_after_n_chars(&self.out, keep);
+            self.out.truncate(keep_end);
+            self.out.push_str("...");
         }
-        self.out.into_iter().collect()
+        self.out
     }
 }
 
@@ -137,24 +172,20 @@ pub(crate) fn truncate_chars(input: &str, max_chars: usize) -> String {
         return String::new();
     }
 
-    let mut chars = input.chars();
-    let mut out: Vec<char> = Vec::with_capacity(max_chars.min(256));
-    for _ in 0..max_chars {
-        let Some(ch) = chars.next() else {
-            return out.into_iter().collect();
-        };
-        out.push(ch);
-    }
-
-    if chars.next().is_none() {
-        return out.into_iter().collect();
+    let end = byte_index_after_n_chars(input, max_chars);
+    if end == input.len() {
+        return input.to_string();
     }
 
     if max_chars > 3 {
-        out.truncate(max_chars - 3);
-        out.extend(['.', '.', '.']);
+        let keep_end = byte_index_after_n_chars(input, max_chars - 3);
+        let mut out = String::with_capacity(keep_end + 3);
+        out.push_str(&input[..keep_end]);
+        out.push_str("...");
+        return out;
     }
-    out.into_iter().collect()
+
+    input[..end].to_string()
 }
 
 #[cfg(test)]

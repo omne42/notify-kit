@@ -88,10 +88,6 @@ impl std::fmt::Debug for ServerChanSink {
 
 impl ServerChanSink {
     pub fn new(config: ServerChanConfig) -> crate::Result<Self> {
-        if config.send_key.trim().is_empty() {
-            return Err(anyhow::anyhow!("serverchan send_key must not be empty").into());
-        }
-
         let (kind, api_url) = build_serverchan_url(&config.send_key)?;
         let api_url_str = api_url.as_str().to_string();
 
@@ -125,10 +121,34 @@ impl ServerChanSink {
         let desp = format_event_body_and_tags_limited(event, TextLimits::new(max_chars));
         serde_json::json!({ "title": title, "desp": desp })
     }
+
+    fn ensure_success_response(body: &serde_json::Value) -> crate::Result<()> {
+        let Some(code) = body["code"].as_i64().or_else(|| body["errno"].as_i64()) else {
+            return Err(anyhow::anyhow!(
+                "serverchan api error: missing code (response body omitted)"
+            )
+            .into());
+        };
+        if code == 0 {
+            return Ok(());
+        }
+        Err(anyhow::anyhow!("serverchan api error: code={code} (response body omitted)").into())
+    }
+}
+
+fn normalize_serverchan_send_key(send_key: &str) -> crate::Result<&str> {
+    let send_key = send_key.trim();
+    if send_key.is_empty() {
+        return Err(anyhow::anyhow!("serverchan send_key must not be empty").into());
+    }
+    if !send_key.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        return Err(anyhow::anyhow!("invalid serverchan send_key").into());
+    }
+    Ok(send_key)
 }
 
 fn build_serverchan_url(send_key: &str) -> crate::Result<(ServerChanKind, reqwest::Url)> {
-    let send_key = send_key.trim();
+    let send_key = normalize_serverchan_send_key(send_key)?;
 
     if let Some(rest) = send_key.strip_prefix("sctp") {
         let Some(pos) = rest.find('t') else {
@@ -143,14 +163,26 @@ fn build_serverchan_url(send_key: &str) -> crate::Result<(ServerChanKind, reqwes
             .map_err(|_| anyhow::anyhow!("invalid serverchan send_key"))?;
 
         let host = format!("{uid}.push.ft07.com");
-        let url_str = format!("https://{host}/send/{send_key}.send");
-        let url =
-            reqwest::Url::parse(&url_str).map_err(|err| anyhow::anyhow!("invalid url: {err}"))?;
+        let mut url = reqwest::Url::parse(&format!("https://{host}/"))
+            .map_err(|err| anyhow::anyhow!("invalid url: {err}"))?;
+        {
+            let mut segments = url
+                .path_segments_mut()
+                .map_err(|_| anyhow::anyhow!("invalid serverchan url"))?;
+            segments.push("send");
+            segments.push(&format!("{send_key}.send"));
+        }
         return Ok((ServerChanKind::Sc3, url));
     }
 
-    let url_str = format!("https://sctapi.ftqq.com/{send_key}.send");
-    let url = reqwest::Url::parse(&url_str).map_err(|err| anyhow::anyhow!("invalid url: {err}"))?;
+    let mut url = reqwest::Url::parse("https://sctapi.ftqq.com/")
+        .map_err(|err| anyhow::anyhow!("invalid url: {err}"))?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("invalid serverchan url"))?;
+        segments.push(&format!("{send_key}.send"));
+    }
     Ok((ServerChanKind::Turbo, url))
 }
 
@@ -186,15 +218,7 @@ impl Sink for ServerChanSink {
             }
 
             let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
-            let code = body["code"]
-                .as_i64()
-                .or_else(|| body["errno"].as_i64())
-                .unwrap_or(0);
-            if code == 0 {
-                return Ok(());
-            }
-
-            Err(anyhow::anyhow!("serverchan api error: code={code} (response body omitted)").into())
+            Self::ensure_success_response(&body)
         })
     }
 }
@@ -255,5 +279,32 @@ mod tests {
         let redacted = redact_url_str(url.as_str());
         assert!(!redacted.contains("SCTsecret"), "{redacted}");
         assert!(redacted.contains("<redacted>"), "{redacted}");
+    }
+
+    #[test]
+    fn rejects_send_key_with_reserved_url_chars() {
+        let cfg = ServerChanConfig::new("SCTbad?x=1");
+        let err = ServerChanSink::new(cfg).expect_err("expected invalid send_key");
+        assert!(
+            err.to_string().contains("invalid serverchan send_key"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn response_requires_explicit_success_code() {
+        let body = serde_json::json!({});
+        let err =
+            ServerChanSink::ensure_success_response(&body).expect_err("expected missing code");
+        assert!(err.to_string().contains("missing code"), "{err:#}");
+    }
+
+    #[test]
+    fn response_accepts_zero_code() {
+        let body = serde_json::json!({ "code": 0 });
+        ServerChanSink::ensure_success_response(&body).expect("expected success");
+
+        let body = serde_json::json!({ "errno": 0 });
+        ServerChanSink::ensure_success_response(&body).expect("expected success");
     }
 }

@@ -59,6 +59,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Docs: 重构 `docs/SUMMARY.md` 的信息架构（Overview / Getting Started / Guides / Reference / Sinks）。
 - Docs: `./scripts/docs.sh` 允许透传 mdBook 参数（便于容器/远程预览）。
 - Docs: `llms.txt` 生成时会剔除 mdBook 的隐藏行（`# ...`），减少噪音。
+- Dev: `githooks/pre-commit` 新增严格门禁（`scripts/pre-commit-check.sh`），提交前执行 clippy（`-D warnings`）与生产目标关键 lint（`unwrap/expect`、`let _ =` 忽略 must_use、冗余 clone）。
 
 ### Fixed
 - `SoundSink`：外部命令会被回收（避免僵尸进程累积）。
@@ -107,6 +108,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/_shared/session_store`：flush 失败在非 verbose 下也会输出一次性 warning（避免静默失败）。
 - `bots/_shared/session_store`：退出 hook 支持多个 store 实例（避免只 flush 第一个）。
 - `bots/_shared/session_store`：`close()` 会取消 debounce 并触发一次 flush（返回 Promise），同时解除 exit hook 注册（避免短生命周期 store 累积 flush 回调）。
+- `bots/_shared/opencode`：`runEventSubscriptionLoop` 在并发未打满且事件流暂时阻塞时，也会及时消费 `onEvent` 失败并触发重连（避免卡死在单次订阅）。
 - `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加超时 + 并发限制（避免 DNS 卡死导致初始化阻塞/线程堆积）。
 - `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加 inflight 去重 + TTL 缓存，并对 pinned client cache 增加容量上限（避免重复/无界增长）。
 - `bots/_shared/log`：verbose 模式输出错误 stack（更易排障）。

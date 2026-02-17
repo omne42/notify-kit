@@ -96,3 +96,11 @@ if [[ ! -x "$gate_script" ]]; then
 fi
 
 "$gate_script"
+
+strict_script="$repo_root/scripts/pre-commit-check.sh"
+if [[ ! -x "$strict_script" ]]; then
+  echo "pre-commit: missing strict check script: $strict_script" >&2
+  exit 1
+fi
+
+"$strict_script"

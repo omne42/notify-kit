@@ -1,21 +1,28 @@
 use std::collections::BTreeSet;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
+
+use futures_util::FutureExt;
+use futures_util::future::join_all;
 
 use crate::event::Event;
 use crate::sinks::Sink;
 
 const DEFAULT_MAX_INFLIGHT_EVENTS: usize = 128;
+const DEFAULT_MAX_SINK_SENDS_IN_PARALLEL: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TryNotifyError {
     NoTokioRuntime,
+    Overloaded,
 }
 
 impl std::fmt::Display for TryNotifyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoTokioRuntime => write!(f, "no tokio runtime"),
+            Self::Overloaded => write!(f, "hub is overloaded"),
         }
     }
 }
@@ -57,6 +64,7 @@ struct HubInner {
     sinks: Vec<Arc<dyn Sink>>,
     per_sink_timeout: Duration,
     inflight: Arc<tokio::sync::Semaphore>,
+    max_sink_sends_in_parallel: usize,
 }
 
 impl Hub {
@@ -75,6 +83,7 @@ impl Hub {
             sinks,
             per_sink_timeout: config.per_sink_timeout,
             inflight: Arc::new(tokio::sync::Semaphore::new(max_inflight_events)),
+            max_sink_sends_in_parallel: DEFAULT_MAX_SINK_SENDS_IN_PARALLEL,
         };
         Self {
             inner: Arc::new(inner),
@@ -100,12 +109,17 @@ impl Hub {
             return;
         };
 
-        self.try_notify_spawn(handle, event);
+        let kind = event.kind.clone();
+        if !self.try_notify_spawn(handle, event) {
+            tracing::warn!(sink = "hub", kind = %kind, "notify dropped: overloaded");
+        }
     }
 
     /// Attempt to enqueue a fire-and-forget notification.
     ///
-    /// Returns `Err(TryNotifyError::NoTokioRuntime)` if called outside a Tokio runtime.
+    /// Returns:
+    /// - `Err(TryNotifyError::NoTokioRuntime)` if called outside a Tokio runtime.
+    /// - `Err(TryNotifyError::Overloaded)` when Hub inflight capacity is full.
     pub fn try_notify(&self, event: Event) -> Result<(), TryNotifyError> {
         if !self.is_kind_enabled(event.kind.as_str()) {
             return Ok(());
@@ -115,9 +129,11 @@ impl Hub {
             return Err(TryNotifyError::NoTokioRuntime);
         };
 
-        self.try_notify_spawn(handle, event);
-
-        Ok(())
+        if self.try_notify_spawn(handle, event) {
+            Ok(())
+        } else {
+            Err(TryNotifyError::Overloaded)
+        }
     }
 
     pub async fn send(&self, event: Event) -> crate::Result<()> {
@@ -144,15 +160,12 @@ impl Hub {
         enabled.contains(kind)
     }
 
-    fn try_notify_spawn(&self, handle: tokio::runtime::Handle, event: Event) {
+    fn try_notify_spawn(&self, handle: tokio::runtime::Handle, event: Event) -> bool {
         let inner = self.inner.clone();
 
         let permit = match inner.inflight.clone().try_acquire_owned() {
             Ok(permit) => permit,
-            Err(_) => {
-                tracing::warn!(sink = "hub", kind = %event.kind, "notify dropped: overloaded");
-                return;
-            }
+            Err(_) => return false,
         };
 
         handle.spawn(async move {
@@ -162,33 +175,44 @@ impl Hub {
                 tracing::warn!(sink = "hub", kind = %event.kind, "notify failed: {err}");
             }
         });
+        true
     }
 }
 
 impl HubInner {
     async fn send(self: Arc<Self>, event: Arc<Event>) -> crate::Result<()> {
-        let mut handles = Vec::with_capacity(self.sinks.len());
-
-        for sink in &self.sinks {
-            let sink = sink.clone();
-            let event = event.clone();
-            let timeout = self.per_sink_timeout;
-            let name = sink.name();
-            let handle = tokio::spawn(async move {
-                match tokio::time::timeout(timeout, sink.send(&event)).await {
-                    Ok(inner) => inner,
-                    Err(_) => Err(anyhow::anyhow!("timeout after {timeout:?}").into()),
-                }
-            });
-            handles.push((name, handle));
-        }
-
         let mut failures: Vec<(&'static str, crate::Error)> = Vec::new();
-        for (name, handle) in handles {
-            match handle.await {
-                Ok(Ok(())) => {}
-                Ok(Err(err)) => failures.push((name, err)),
-                Err(err) => failures.push((name, anyhow::Error::from(err).into())),
+        let max_parallel = self.max_sink_sends_in_parallel.max(1);
+        for sinks_chunk in self.sinks.chunks(max_parallel) {
+            let mut futures = Vec::with_capacity(sinks_chunk.len());
+            for sink in sinks_chunk {
+                let sink = Arc::clone(sink);
+                let event = event.clone();
+                let timeout = self.per_sink_timeout;
+                let name = sink.name();
+                futures.push(async move {
+                    let result = AssertUnwindSafe(async move {
+                        match tokio::time::timeout(timeout, sink.send(&event)).await {
+                            Ok(inner) => inner,
+                            Err(_) => Err(anyhow::anyhow!("timeout after {timeout:?}").into()),
+                        }
+                    })
+                    .catch_unwind()
+                    .await;
+
+                    let result = match result {
+                        Ok(inner) => inner,
+                        Err(_) => Err(anyhow::anyhow!("sink panicked").into()),
+                    };
+                    (name, result)
+                });
+            }
+
+            for (name, result) in join_all(futures).await {
+                match result {
+                    Ok(()) => {}
+                    Err(err) => failures.push((name, err)),
+                }
             }
         }
 
@@ -198,7 +222,11 @@ impl HubInner {
 
         let mut msg = String::from("one or more sinks failed:");
         for (name, err) in failures {
-            msg.push_str(&format!("\n- {name}: {err:#}"));
+            msg.push('\n');
+            msg.push_str("- ");
+            msg.push_str(name);
+            msg.push_str(": ");
+            msg.push_str(&format!("{err:#}"));
         }
         Err(anyhow::anyhow!(msg).into())
     }
@@ -381,8 +409,10 @@ mod tests {
 
             hub.try_notify(Event::new("kind", Severity::Info, "t1"))
                 .expect("first notify ok");
-            hub.try_notify(Event::new("kind", Severity::Info, "t2"))
-                .expect("second notify ok (dropped)");
+            assert_eq!(
+                hub.try_notify(Event::new("kind", Severity::Info, "t2")),
+                Err(TryNotifyError::Overloaded)
+            );
 
             tokio::time::sleep(Duration::from_millis(80)).await;
             assert_eq!(counter.load(Ordering::SeqCst), 1);

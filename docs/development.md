@@ -8,6 +8,12 @@
 CARGO_NET_OFFLINE=true ./scripts/gate.sh
 ```
 
+提交前严格检查（由 `githooks/pre-commit` 自动执行）：
+
+```bash
+./scripts/pre-commit-check.sh
+```
+
 常用命令：
 
 ```bash
@@ -20,6 +26,7 @@ cargo test --workspace
 - `crates/notify-kit/`：库实现
 - `docs/`：mdBook 文档（本目录）
 - `scripts/gate.sh`：格式化/编译门禁
+- `scripts/pre-commit-check.sh`：提交前严格检查（clippy + 关键 lint）
 
 ## 文档维护
 

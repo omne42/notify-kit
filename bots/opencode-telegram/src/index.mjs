@@ -4,7 +4,13 @@ import { createOpencode } from "@opencode-ai/sdk"
 
 import { createBotLimiter, createBotSessionStore } from "../../_shared/bootstrap.mjs"
 import { ignoreError } from "../../_shared/log.mjs"
-import { assertEnv, buildResponseText, getCompletedToolUpdate } from "../../_shared/opencode.mjs"
+import {
+  assertEnv,
+  buildResponseText,
+  getCompletedToolUpdate,
+  runEventSubscriptionLoop,
+  withTimeout,
+} from "../../_shared/opencode.mjs"
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -18,12 +24,27 @@ function truncateForTelegram(text, max = 3800) {
 
 const token = assertEnv("TELEGRAM_BOT_TOKEN")
 const apiBase = `https://api.telegram.org/bot${token}`
+const botHttpTimeoutMsValue = Number.parseInt(String(process.env.OPENCODE_BOT_HTTP_TIMEOUT_MS || "15000"), 10)
+const botHttpTimeoutMs =
+  Number.isFinite(botHttpTimeoutMsValue) && botHttpTimeoutMsValue > 0 ? botHttpTimeoutMsValue : 15000
+
+function createFetchTimeoutSignal(timeoutMs) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return undefined
+  if (typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") return undefined
+  return AbortSignal.timeout(timeoutMs)
+}
 
 async function tg(method, payload) {
+  const longPollSeconds = Number.parseInt(String(payload?.timeout || "0"), 10)
+  const timeoutMs =
+    Number.isFinite(longPollSeconds) && longPollSeconds > 0
+      ? Math.max(botHttpTimeoutMs, (longPollSeconds + 15) * 1000)
+      : botHttpTimeoutMs
   const resp = await fetch(`${apiBase}/${method}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(payload ?? {}),
+    signal: createFetchTimeoutSignal(timeoutMs),
   })
 
   const data = await resp.json().catch(() => null)
@@ -57,34 +78,113 @@ const chatToSession = store.map
  * sessionId -> chatId
  */
 const sessionToChat = new Map()
-for (const [chatId, sessionId] of chatToSession.entries()) {
+const sessionCreateInflight = new Map()
+const chatMessageInflight = new Map()
+const chatPendingCounts = new Map()
+const sessionPendingLimitValue = Number.parseInt(
+  String(process.env.OPENCODE_BOT_SESSION_MAX_PENDING || "64"),
+  10,
+)
+const sessionPendingLimit =
+  Number.isFinite(sessionPendingLimitValue) && sessionPendingLimitValue > 0
+    ? sessionPendingLimitValue
+    : 64
+
+function getStoredSessionId(value) {
+  return typeof value === "string" ? value : typeof value?.sessionId === "string" ? value.sessionId : ""
+}
+
+function applyStoreEvictions(evicted) {
+  if (!Array.isArray(evicted) || evicted.length === 0) return
+  for (const [, value] of evicted) {
+    const evictedSessionId = getStoredSessionId(value)
+    if (evictedSessionId) {
+      sessionToChat.delete(evictedSessionId)
+    }
+  }
+}
+
+function setStoredSession(chatId, sessionId) {
+  const previousSessionId = getStoredSessionId(chatToSession.get(chatId))
+  if (previousSessionId && previousSessionId !== sessionId) {
+    sessionToChat.delete(previousSessionId)
+  }
+  const evicted = store.set(chatId, sessionId)
+  sessionToChat.set(sessionId, chatId)
+  applyStoreEvictions(evicted)
+}
+
+for (const [chatId, value] of chatToSession.entries()) {
   if (!chatId) continue
-  if (typeof sessionId !== "string" || !sessionId) continue
+  const sessionId = getStoredSessionId(value)
+  if (!sessionId) continue
+  if (typeof value !== "string") {
+    setStoredSession(chatId, sessionId)
+    continue
+  }
   sessionToChat.set(sessionId, chatId)
 }
 
 async function ensureSession(chatId) {
   const existing = chatToSession.get(chatId)
-  if (typeof existing === "string" && existing) return { chatId, sessionId: existing }
-
-  const created = await opencode.client.session.create({
-    body: { title: `Telegram chat ${chatId}` },
-  })
-  if (created.error) {
-    throw new Error(created.error.message || "failed to create session")
+  const existingSessionId = getStoredSessionId(existing)
+  if (existingSessionId) {
+    if (typeof existing !== "string") {
+      setStoredSession(chatId, existingSessionId)
+    } else {
+      sessionToChat.set(existingSessionId, chatId)
+    }
+    return { chatId, sessionId: existingSessionId }
   }
 
-  const sessionId = created.data.id
-  store.set(chatId, sessionId)
-  sessionToChat.set(sessionId, chatId)
-
-  const share = await opencode.client.session.share({ path: { id: sessionId } })
-  const url = share?.data?.share?.url
-  if (url) {
-    await sendMessage(chatId, url)
+  const inflight = sessionCreateInflight.get(chatId)
+  if (inflight) {
+    return inflight
   }
 
-  return { chatId, sessionId }
+  const creating = (async () => {
+    const created = await withTimeout(
+      (signal) =>
+        opencode.client.session.create(
+          {
+            body: { title: `Telegram chat ${chatId}` },
+          },
+          { signal },
+        ),
+      "telegram session.create",
+    )
+    if (created.error) {
+      throw new Error(created.error.message || "failed to create session")
+    }
+
+    const sessionId = created.data.id
+    setStoredSession(chatId, sessionId)
+
+    let url = null
+    try {
+      const share = await withTimeout(
+        (signal) => opencode.client.session.share({ path: { id: sessionId } }, { signal }),
+        "telegram session.share",
+      )
+      url = share?.data?.share?.url || null
+    } catch (err) {
+      console.error("session share failed:", err?.message || err)
+    }
+    if (url) {
+      await sendMessage(chatId, url)
+    }
+
+    return { chatId, sessionId }
+  })()
+
+  sessionCreateInflight.set(chatId, creating)
+  try {
+    return await creating
+  } finally {
+    if (sessionCreateInflight.get(chatId) === creating) {
+      sessionCreateInflight.delete(chatId)
+    }
+  }
 }
 
 async function handleUserText(chatId, text) {
@@ -96,28 +196,77 @@ async function handleUserText(chatId, text) {
     return
   }
 
-  await limiter.run(async () => {
-    let session
-    try {
-      session = await ensureSession(chatId)
-    } catch {
-      await sendMessage(chatId, "Sorry, I had trouble creating a session.")
-      return
-    }
+  try {
+    await limiter.run(async () => {
+      let session
+      try {
+        session = await ensureSession(chatId)
+      } catch {
+        await sendMessage(chatId, "Sorry, I had trouble creating a session.")
+        return
+      }
 
-    const result = await opencode.client.session.prompt({
-      path: { id: session.sessionId },
-      body: { parts: [{ type: "text", text: trimmed }] },
+      let result
+      try {
+        result = await withTimeout(
+          (signal) =>
+            opencode.client.session.prompt(
+              {
+                path: { id: session.sessionId },
+                body: { parts: [{ type: "text", text: trimmed }] },
+              },
+              { signal },
+            ),
+          "telegram session.prompt",
+        )
+      } catch {
+        await sendMessage(chatId, "Sorry, I had trouble processing your message.")
+        return
+      }
+
+      if (result.error) {
+        await sendMessage(chatId, "Sorry, I had trouble processing your message.")
+        return
+      }
+
+      const responseText = buildResponseText(result.data)
+      await sendMessage(chatId, responseText)
+    })
+  } catch {
+    await sendMessage(chatId, "Sorry, I had trouble processing your message.")
+  }
+}
+
+function enqueueChatMessage(chatId, text) {
+  const pending = chatPendingCounts.get(chatId) || 0
+  if (pending >= sessionPendingLimit) {
+    const err = new Error(`session queue is full (chatId=${chatId}, maxPending=${sessionPendingLimit})`)
+    err.code = "SESSION_QUEUE_FULL"
+    return Promise.reject(err)
+  }
+
+  chatPendingCounts.set(chatId, pending + 1)
+  const prev = chatMessageInflight.get(chatId) || Promise.resolve()
+  const next = prev
+    .catch(() => {})
+    .then(() => handleUserText(chatId, text))
+    .catch((err) => {
+      console.error("telegram handle message failed:", err?.message || err)
+    })
+    .finally(() => {
+      const remain = (chatPendingCounts.get(chatId) || 1) - 1
+      if (remain <= 0) {
+        chatPendingCounts.delete(chatId)
+      } else {
+        chatPendingCounts.set(chatId, remain)
+      }
+      if (chatMessageInflight.get(chatId) === next) {
+        chatMessageInflight.delete(chatId)
+      }
     })
 
-    if (result.error) {
-      await sendMessage(chatId, "Sorry, I had trouble processing your message.")
-      return
-    }
-
-    const responseText = buildResponseText(result.data)
-    await sendMessage(chatId, responseText)
-  })
+  chatMessageInflight.set(chatId, next)
+  return next
 }
 
 async function handleToolUpdate(part) {
@@ -130,16 +279,18 @@ async function handleToolUpdate(part) {
   await sendMessage(chatId, `${update.tool} - ${update.title}`)
 }
 
-;(async () => {
-  const events = await opencode.client.event.subscribe()
-  for await (const event of events.stream) {
-    if (event?.type !== "message.part.updated") continue
+void runEventSubscriptionLoop({
+  label: "telegram event subscription",
+  subscribe: () =>
+    withTimeout(
+      (signal) => opencode.client.event.subscribe(undefined, { signal }),
+      "telegram event.subscribe",
+    ),
+  onEvent: async (event) => {
+    if (event?.type !== "message.part.updated") return
     const part = event?.properties?.part
     await handleToolUpdate(part)
-  }
-})().catch((err) => {
-  console.error("event subscription failed:", err)
-  process.exitCode = 1
+  },
 })
 
 let offset = 0
@@ -161,7 +312,16 @@ for (;;) {
         const chatId = String(msg.chat?.id || "")
         if (!chatId) continue
 
-        await handleUserText(chatId, msg.text)
+        enqueueChatMessage(chatId, msg.text).catch((err) => {
+          if (err?.code === "SESSION_QUEUE_FULL") {
+            sendMessage(
+              chatId,
+              "Sorry, I'm handling too many messages in this chat. Please try again shortly.",
+            ).catch(() => {})
+            return
+          }
+          console.error("telegram enqueue message failed:", err?.message || err)
+        })
       }
     }
   } catch (err) {

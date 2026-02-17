@@ -1,12 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::hash::Hash;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 
 pub(crate) const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024;
+const RESPONSE_BODY_DRAIN_LIMIT_BYTES: usize = 64 * 1024;
 
 const DEFAULT_DNS_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 const DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT: usize = 32;
@@ -27,8 +27,9 @@ struct CachedPinnedClient {
 
 static PINNED_CLIENT_CACHE: OnceLock<RwLock<HashMap<PinnedClientKey, CachedPinnedClient>>> =
     OnceLock::new();
+static PINNED_CLIENT_BUILD_LOCKS: OnceLock<Mutex<HashMap<PinnedClientKey, Weak<Mutex<()>>>>> =
+    OnceLock::new();
 static DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
-static SYNC_DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<SyncSemaphore>> = OnceLock::new();
 
 fn dns_lookup_timeout_message() -> String {
     format!("dns lookup timeout (capped at {DEFAULT_DNS_LOOKUP_TIMEOUT:?})")
@@ -38,99 +39,55 @@ fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinne
     PINNED_CLIENT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+fn pinned_client_build_locks() -> &'static Mutex<HashMap<PinnedClientKey, Weak<Mutex<()>>>> {
+    PINNED_CLIENT_BUILD_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 fn dns_lookup_semaphore() -> &'static Arc<Semaphore> {
     DNS_LOOKUP_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT)))
 }
 
-fn cap_hashmap_entries<K: Clone + Eq + Hash, V>(cache: &mut HashMap<K, V>, max: usize, keep: &K) {
+fn cap_pinned_client_cache_entries(
+    cache: &mut HashMap<PinnedClientKey, CachedPinnedClient>,
+    max: usize,
+    keep: &PinnedClientKey,
+) {
     if max == 0 {
         cache.clear();
         return;
     }
-    if cache.len() <= max {
-        return;
-    }
 
-    let to_remove = cache.len() - max;
-    let keys: Vec<K> = cache
-        .keys()
-        .filter(|k| *k != keep)
-        .take(to_remove)
-        .cloned()
-        .collect();
-    for k in keys {
-        cache.remove(&k);
-        if cache.len() <= max {
+    while cache.len() > max {
+        let mut candidate_key: Option<PinnedClientKey> = None;
+        let mut candidate_exp: Option<Instant> = None;
+
+        for (key, value) in cache.iter() {
+            if key == keep {
+                continue;
+            }
+            match (candidate_exp, candidate_key.as_ref()) {
+                (None, _) => {
+                    candidate_exp = Some(value.expires_at);
+                    candidate_key = Some(key.clone());
+                }
+                (Some(exp), Some(cur_key))
+                    if value.expires_at < exp
+                        || (value.expires_at == exp
+                            && (key.host.as_str(), key.timeout_ms)
+                                < (cur_key.host.as_str(), cur_key.timeout_ms)) =>
+                {
+                    candidate_exp = Some(value.expires_at);
+                    candidate_key = Some(key.clone());
+                }
+                _ => {}
+            }
+        }
+
+        let Some(key) = candidate_key else {
             break;
-        }
+        };
+        cache.remove(&key);
     }
-}
-
-struct SyncSemaphore {
-    max: usize,
-    available: Mutex<usize>,
-    cv: Condvar,
-}
-
-struct SyncPermit {
-    sem: Arc<SyncSemaphore>,
-}
-
-impl Drop for SyncPermit {
-    fn drop(&mut self) {
-        self.sem.release();
-    }
-}
-
-impl SyncSemaphore {
-    fn new(max: usize) -> Self {
-        Self {
-            max,
-            available: Mutex::new(max),
-            cv: Condvar::new(),
-        }
-    }
-
-    fn release(&self) {
-        let mut available = self.available.lock().unwrap_or_else(|e| e.into_inner());
-        *available = (*available + 1).min(self.max);
-        self.cv.notify_one();
-    }
-
-    fn acquire_timeout(self: &Arc<Self>, timeout: Duration) -> Option<SyncPermit> {
-        if timeout == Duration::ZERO {
-            return None;
-        }
-        let deadline = Instant::now() + timeout;
-
-        let mut available = self.available.lock().unwrap_or_else(|e| e.into_inner());
-        loop {
-            if *available > 0 {
-                *available -= 1;
-                return Some(SyncPermit { sem: self.clone() });
-            }
-
-            let now = Instant::now();
-            if now >= deadline {
-                return None;
-            }
-
-            let remaining = deadline.duration_since(now);
-            let (guard, wait) = self
-                .cv
-                .wait_timeout(available, remaining)
-                .unwrap_or_else(|e| e.into_inner());
-            available = guard;
-            if wait.timed_out() {
-                return None;
-            }
-        }
-    }
-}
-
-fn sync_dns_lookup_semaphore() -> &'static Arc<SyncSemaphore> {
-    SYNC_DNS_LOOKUP_SEMAPHORE
-        .get_or_init(|| Arc::new(SyncSemaphore::new(DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT)))
 }
 
 fn build_http_client_builder(timeout: Duration) -> reqwest::ClientBuilder {
@@ -259,69 +216,10 @@ pub(crate) fn validate_url_path_prefix(url: &reqwest::Url, prefix: &str) -> crat
     Err(anyhow::anyhow!("url path is not allowed").into())
 }
 
-pub(crate) fn validate_url_resolves_to_public_ip(
-    url: &reqwest::Url,
-    timeout: Duration,
-) -> crate::Result<()> {
-    resolve_url_to_public_addrs_with_timeout(url, timeout)?;
-    Ok(())
-}
-
-fn resolve_url_to_public_addrs_with_timeout(
-    url: &reqwest::Url,
-    timeout: Duration,
-) -> crate::Result<Vec<SocketAddr>> {
-    let Some(host) = url.host_str() else {
-        return Err(anyhow::anyhow!("url must have a host").into());
-    };
-
-    let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
-    if dns_timeout == Duration::ZERO {
-        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
-    }
-
-    let deadline = Instant::now() + dns_timeout;
-
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    let Some(permit) = sync_dns_lookup_semaphore()
-        .clone()
-        .acquire_timeout(remaining)
-    else {
-        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
-    };
-
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    let host = host.to_ascii_lowercase();
-    std::thread::Builder::new()
-        .name("notify-kit-dns".to_string())
-        .spawn(move || {
-            let _permit = permit;
-            let res = resolve_host_to_public_addrs(&host);
-            let _ = tx.send(res);
-        })
-        .map_err(|err| anyhow::anyhow!("dns lookup spawn failed: {err}"))?;
-
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining == Duration::ZERO {
-        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
-    }
-
-    match rx.recv_timeout(remaining) {
-        Ok(res) => res,
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into())
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            Err(anyhow::anyhow!("dns lookup failed").into())
-        }
-    }
-}
-
-fn resolve_host_to_public_addrs(host: &str) -> crate::Result<Vec<SocketAddr>> {
-    let addrs = (host, 443)
-        .to_socket_addrs()
-        .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))?;
-
+fn validate_public_addrs<I>(addrs: I) -> crate::Result<Vec<SocketAddr>>
+where
+    I: IntoIterator<Item = SocketAddr>,
+{
     let mut out: Vec<SocketAddr> = Vec::new();
     let mut uniq: HashSet<SocketAddr> = HashSet::new();
     let mut seen = 0usize;
@@ -342,6 +240,34 @@ fn resolve_host_to_public_addrs(host: &str) -> crate::Result<Vec<SocketAddr>> {
     Ok(out)
 }
 
+async fn resolve_url_to_public_addrs_async(
+    url: &reqwest::Url,
+    timeout: Duration,
+) -> crate::Result<Vec<SocketAddr>> {
+    let Some(host) = url.host_str() else {
+        return Err(anyhow::anyhow!("url must have a host").into());
+    };
+
+    let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
+    if dns_timeout == Duration::ZERO {
+        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
+    }
+
+    let permit = tokio::time::timeout(dns_timeout, dns_lookup_semaphore().clone().acquire_owned())
+        .await
+        .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
+        .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
+
+    let lookup = tokio::time::timeout(dns_timeout, tokio::net::lookup_host((host, 443)))
+        .await
+        .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
+        .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))?;
+
+    let out = validate_public_addrs(lookup)?;
+    drop(permit);
+    Ok(out)
+}
+
 pub(crate) async fn build_http_client_pinned_async(
     timeout: Duration,
     url: &reqwest::Url,
@@ -352,21 +278,11 @@ pub(crate) async fn build_http_client_pinned_async(
         .to_string();
 
     let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
-    let permit = tokio::time::timeout(dns_timeout, dns_lookup_semaphore().clone().acquire_owned())
-        .await
-        .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
-        .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
-    let lookup = tokio::task::spawn_blocking({
-        let host = host.clone();
-        move || {
-            let _permit = permit;
-            resolve_host_to_public_addrs(&host)
-        }
-    });
-    let addrs = tokio::time::timeout(dns_timeout, lookup)
-        .await
-        .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
-        .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))??;
+    if dns_timeout == Duration::ZERO {
+        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
+    }
+
+    let addrs = resolve_url_to_public_addrs_async(url, dns_timeout).await?;
 
     build_http_client_builder(timeout)
         .resolve_to_addrs(&host, &addrs)
@@ -394,36 +310,83 @@ pub(crate) async fn select_http_client(
     };
     let key_for_eviction = key.clone();
 
-    let now = Instant::now();
+    let lookup_now = Instant::now();
     {
         let cache = pinned_client_cache().read().await;
         if let Some(cached) = cache.get(&key) {
-            if cached.expires_at > now {
+            if cached.expires_at > lookup_now {
                 return Ok(cached.client.clone());
             }
         }
     }
 
-    let client = build_http_client_pinned_async(timeout, url).await?;
+    let key_lock = {
+        let mut locks = pinned_client_build_locks().lock().await;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(existing) = locks.get(&key).and_then(Weak::upgrade) {
+            existing
+        } else {
+            let new_lock = Arc::new(Mutex::new(()));
+            locks.insert(key.clone(), Arc::downgrade(&new_lock));
+            new_lock
+        }
+    };
 
     {
-        let mut cache = pinned_client_cache().write().await;
-        cache.retain(|_, v| v.expires_at > now);
-        cache.insert(
-            key,
-            CachedPinnedClient {
-                client: client.clone(),
-                expires_at: now + DEFAULT_PINNED_CLIENT_TTL,
-            },
-        );
-        cap_hashmap_entries(
-            &mut cache,
-            DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES,
-            &key_for_eviction,
-        );
+        let _build_guard = key_lock.lock().await;
+        let now = Instant::now();
+        let cached_client = {
+            let cache = pinned_client_cache().read().await;
+            cache.get(&key).and_then(|cached| {
+                if cached.expires_at > now {
+                    Some(cached.client.clone())
+                } else {
+                    None
+                }
+            })
+        };
+        if let Some(client) = cached_client {
+            Ok(client)
+        } else {
+            let client = build_http_client_pinned_async(timeout, url).await?;
+            let now = Instant::now();
+            let mut cache = pinned_client_cache().write().await;
+            cache.retain(|_, v| v.expires_at > now);
+            if let Some(cached) = cache.get(&key) {
+                if cached.expires_at > now {
+                    Ok(cached.client.clone())
+                } else {
+                    cache.insert(
+                        key.clone(),
+                        CachedPinnedClient {
+                            client: client.clone(),
+                            expires_at: now + DEFAULT_PINNED_CLIENT_TTL,
+                        },
+                    );
+                    cap_pinned_client_cache_entries(
+                        &mut cache,
+                        DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES,
+                        &key_for_eviction,
+                    );
+                    Ok(client)
+                }
+            } else {
+                cache.insert(
+                    key.clone(),
+                    CachedPinnedClient {
+                        client: client.clone(),
+                        expires_at: now + DEFAULT_PINNED_CLIENT_TTL,
+                    },
+                );
+                cap_pinned_client_cache_entries(
+                    &mut cache,
+                    DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES,
+                    &key_for_eviction,
+                );
+                Ok(client)
+            }
+        }
     }
-
-    Ok(client)
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -604,23 +567,28 @@ async fn read_body_bytes_limited(
     max_bytes: usize,
 ) -> crate::Result<Vec<u8>> {
     if max_bytes == 0 {
+        drain_response_body_limited(&mut resp, RESPONSE_BODY_DRAIN_LIMIT_BYTES).await;
         return Err(anyhow::anyhow!("response body too large (response body omitted)").into());
     }
 
+    let mut cap_hint = 0usize;
     if let Some(len) = resp.content_length() {
         if len > max_bytes as u64 {
+            drain_response_body_limited(&mut resp, RESPONSE_BODY_DRAIN_LIMIT_BYTES).await;
             return Err(anyhow::anyhow!("response body too large (response body omitted)").into());
         }
+        cap_hint = content_length_capacity_hint(len, max_bytes);
     }
 
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(cap_hint);
     while let Some(chunk) = resp.chunk().await.map_err(|err| {
         anyhow::anyhow!(
             "read response body failed ({})",
             sanitize_reqwest_error(&err)
         )
     })? {
-        if buf.len() + chunk.len() > max_bytes {
+        if chunk.len() > max_bytes.saturating_sub(buf.len()) {
+            drain_response_body_limited(&mut resp, RESPONSE_BODY_DRAIN_LIMIT_BYTES).await;
             return Err(anyhow::anyhow!("response body too large (response body omitted)").into());
         }
         buf.extend_from_slice(&chunk);
@@ -634,17 +602,20 @@ async fn read_body_bytes_truncated(
     max_bytes: usize,
 ) -> crate::Result<(Vec<u8>, bool)> {
     if max_bytes == 0 {
+        drain_response_body_limited(&mut resp, RESPONSE_BODY_DRAIN_LIMIT_BYTES).await;
         return Ok((Vec::new(), true));
     }
 
     let mut truncated = false;
+    let mut cap_hint = 0usize;
     if let Some(len) = resp.content_length() {
         if len > max_bytes as u64 {
             truncated = true;
         }
+        cap_hint = content_length_capacity_hint(len, max_bytes);
     }
 
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(cap_hint);
     while let Some(chunk) = resp.chunk().await.map_err(|err| {
         anyhow::anyhow!(
             "read response body failed ({})",
@@ -666,7 +637,26 @@ async fn read_body_bytes_truncated(
         buf.extend_from_slice(&chunk);
     }
 
+    if truncated {
+        drain_response_body_limited(&mut resp, RESPONSE_BODY_DRAIN_LIMIT_BYTES).await;
+    }
+
     Ok((buf, truncated))
+}
+
+async fn drain_response_body_limited(resp: &mut reqwest::Response, mut remaining: usize) {
+    while remaining > 0 {
+        let Ok(Some(chunk)) = resp.chunk().await else {
+            break;
+        };
+        remaining = remaining.saturating_sub(chunk.len());
+    }
+}
+
+fn content_length_capacity_hint(content_length: u64, max_bytes: usize) -> usize {
+    usize::try_from(content_length)
+        .ok()
+        .map_or(max_bytes, |len| len.min(max_bytes))
 }
 
 #[cfg(test)]

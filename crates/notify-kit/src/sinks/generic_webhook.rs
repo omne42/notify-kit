@@ -265,10 +265,7 @@ impl Sink for GenericWebhookSink {
                 )
                 .into());
             }
-            Err(anyhow::anyhow!(
-                "generic webhook http error: {status}, response={summary} (response body omitted)"
-            )
-            .into())
+            Err(anyhow::anyhow!("generic webhook http error: {status}, response={summary}").into())
         })
     }
 }

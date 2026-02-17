@@ -4,14 +4,29 @@ import { createOpencode } from "@opencode-ai/sdk"
 
 import { createBotLimiter, createBotSessionStore } from "../../_shared/bootstrap.mjs"
 import { ignoreError } from "../../_shared/log.mjs"
-import { assertEnv, buildResponseText, getCompletedToolUpdate } from "../../_shared/opencode.mjs"
+import {
+  assertEnv,
+  buildResponseText,
+  getCompletedToolUpdate,
+  runEventSubscriptionLoop,
+  withTimeout,
+} from "../../_shared/opencode.mjs"
 
 assertEnv("FEISHU_APP_ID")
 assertEnv("FEISHU_APP_SECRET")
 assertEnv("FEISHU_VERIFICATION_TOKEN")
 assertEnv("FEISHU_ENCRYPT_KEY", { optional: true })
 
-const port = Number.parseInt(process.env.PORT || "3000", 10)
+function parsePortEnv(name, fallback = "3000") {
+  const raw = String(process.env[name] || fallback).trim()
+  const value = Number.parseInt(raw, 10)
+  if (!Number.isSafeInteger(value) || value < 1 || value > 65535) {
+    throw new Error(`invalid ${name}: expected an integer in range 1..65535`)
+  }
+  return value
+}
+
+const port = parsePortEnv("PORT")
 
 console.log("🚀 Starting opencode server...")
 const opencode = await createOpencode({ port: 0 })
@@ -26,10 +41,65 @@ const client = new lark.Client({
 })
 
 /**
- * sessionKey = `${tenantKey ?? "default"}-${chatId}`
+ * sessionKey = JSON.stringify([tenantKey ?? "default", chatId])
  * value = { sessionId, tenantKey, chatId }
  */
 const sessions = store.map
+const sessionsById = new Map()
+const sessionCreateInflight = new Map()
+const messageInflight = new Map()
+const pendingCounts = new Map()
+const sessionPendingLimitValue = Number.parseInt(
+  String(process.env.OPENCODE_BOT_SESSION_MAX_PENDING || "64"),
+  10,
+)
+const sessionPendingLimit =
+  Number.isFinite(sessionPendingLimitValue) && sessionPendingLimitValue > 0
+    ? sessionPendingLimitValue
+    : 64
+
+function getSessionKey(tenantKey, chatId) {
+  const normalizedTenantKey =
+    typeof tenantKey === "string" && tenantKey.trim() !== "" ? tenantKey : "default"
+  return JSON.stringify([normalizedTenantKey, String(chatId || "")])
+}
+
+function getStoredSessionId(value) {
+  return typeof value === "string" ? value : typeof value?.sessionId === "string" ? value.sessionId : ""
+}
+
+function applyStoreEvictions(evicted) {
+  if (!Array.isArray(evicted) || evicted.length === 0) return
+  for (const [, value] of evicted) {
+    const evictedSessionId = getStoredSessionId(value)
+    if (evictedSessionId) {
+      sessionsById.delete(evictedSessionId)
+    }
+  }
+}
+
+function setStoredSession(sessionKey, session) {
+  const previousSessionId = getStoredSessionId(sessions.get(sessionKey))
+  if (previousSessionId && previousSessionId !== session.sessionId) {
+    sessionsById.delete(previousSessionId)
+  }
+  const evicted = store.set(sessionKey, session)
+  sessionsById.set(session.sessionId, session)
+  applyStoreEvictions(evicted)
+}
+
+for (const value of sessions.values()) {
+  if (!value || typeof value !== "object") continue
+  const sessionId = typeof value.sessionId === "string" ? value.sessionId : ""
+  const chatId = typeof value.chatId === "string" ? value.chatId : ""
+  if (!sessionId || !chatId) continue
+
+  sessionsById.set(sessionId, {
+    sessionId,
+    tenantKey: typeof value.tenantKey === "string" ? value.tenantKey : null,
+    chatId,
+  })
+}
 
 async function sendTextToChat(tenantKey, chatId, text) {
   if (!chatId || !text) return
@@ -45,32 +115,86 @@ async function sendTextToChat(tenantKey, chatId, text) {
   const tenantOpt =
     tenantKey && String(tenantKey).trim() !== "" ? lark.withTenantKey(tenantKey) : undefined
 
-  await ignoreError(client.im.message.create(req, tenantOpt), "feishu send message failed")
+  await ignoreError(
+    withTimeout(client.im.message.create(req, tenantOpt), "feishu im.message.create"),
+    "feishu send message failed",
+  )
 }
 
 async function ensureSession(tenantKey, chatId) {
-  const sessionKey = `${tenantKey || "default"}-${chatId}`
-  let session = sessions.get(sessionKey)
-  if (session) return session
-
-  const created = await opencode.client.session.create({
-    body: { title: `Feishu chat ${chatId}` },
-  })
-
-  if (created.error) {
-    throw new Error(created.error.message || "failed to create session")
+  const sessionKey = getSessionKey(tenantKey, chatId)
+  const existing = sessions.get(sessionKey)
+  const existingSessionId =
+    typeof existing === "string"
+      ? existing
+      : typeof existing?.sessionId === "string"
+        ? existing.sessionId
+        : ""
+  if (existingSessionId) {
+    const session = { sessionId: existingSessionId, tenantKey, chatId }
+    if (
+      typeof existing !== "object" ||
+      existing === null ||
+      existing.sessionId !== existingSessionId ||
+      existing.tenantKey !== tenantKey ||
+      existing.chatId !== chatId
+    ) {
+      setStoredSession(sessionKey, session)
+    } else {
+      sessionsById.set(existingSessionId, session)
+    }
+    return session
   }
 
-  session = { sessionId: created.data.id, tenantKey, chatId }
-  store.set(sessionKey, session)
-
-  const share = await opencode.client.session.share({ path: { id: session.sessionId } })
-  const url = share?.data?.share?.url
-  if (url) {
-    await sendTextToChat(tenantKey, chatId, url)
+  const inflight = sessionCreateInflight.get(sessionKey)
+  if (inflight) {
+    return inflight
   }
 
-  return session
+  const creating = (async () => {
+    const created = await withTimeout(
+      (signal) =>
+        opencode.client.session.create(
+          {
+            body: { title: `Feishu chat ${chatId}` },
+          },
+          { signal },
+        ),
+      "feishu session.create",
+    )
+
+    if (created.error) {
+      throw new Error(created.error.message || "failed to create session")
+    }
+
+    const session = { sessionId: created.data.id, tenantKey, chatId }
+    setStoredSession(sessionKey, session)
+
+    let url = null
+    try {
+      const share = await withTimeout(
+        (signal) => opencode.client.session.share({ path: { id: session.sessionId } }, { signal }),
+        "feishu session.share",
+      )
+      url = share?.data?.share?.url || null
+    } catch (err) {
+      console.error("session share failed:", err?.message || err)
+    }
+    if (url) {
+      await sendTextToChat(tenantKey, chatId, url)
+    }
+
+    return session
+  })()
+
+  sessionCreateInflight.set(sessionKey, creating)
+  try {
+    return await creating
+  } finally {
+    if (sessionCreateInflight.get(sessionKey) === creating) {
+      sessionCreateInflight.delete(sessionKey)
+    }
+  }
 }
 
 async function handleUserText(tenantKey, chatId, text) {
@@ -82,58 +206,109 @@ async function handleUserText(tenantKey, chatId, text) {
     return
   }
 
-  await limiter.run(async () => {
-    let session
-    try {
-      session = await ensureSession(tenantKey, chatId)
-    } catch {
-      await sendTextToChat(tenantKey, chatId, "Sorry, I had trouble creating a session.")
-      return
-    }
+  try {
+    await limiter.run(async () => {
+      let session
+      try {
+        session = await ensureSession(tenantKey, chatId)
+      } catch {
+        await sendTextToChat(tenantKey, chatId, "Sorry, I had trouble creating a session.")
+        return
+      }
 
-    const result = await opencode.client.session.prompt({
-      path: { id: session.sessionId },
-      body: { parts: [{ type: "text", text: trimmed }] },
+      let result
+      try {
+        result = await withTimeout(
+          (signal) =>
+            opencode.client.session.prompt(
+              {
+                path: { id: session.sessionId },
+                body: { parts: [{ type: "text", text: trimmed }] },
+              },
+              { signal },
+            ),
+          "feishu session.prompt",
+        )
+      } catch {
+        await sendTextToChat(tenantKey, chatId, "Sorry, I had trouble processing your message.")
+        return
+      }
+
+      if (result.error) {
+        await sendTextToChat(tenantKey, chatId, "Sorry, I had trouble processing your message.")
+        return
+      }
+
+      const response = result.data
+      const responseText = buildResponseText(response)
+
+      await sendTextToChat(tenantKey, chatId, responseText)
+    })
+  } catch {
+    await sendTextToChat(tenantKey, chatId, "Sorry, I had trouble processing your message.")
+  }
+}
+
+function enqueueChatMessage(tenantKey, chatId, text) {
+  const sessionKey = getSessionKey(tenantKey, chatId)
+  const pending = pendingCounts.get(sessionKey) || 0
+  if (pending >= sessionPendingLimit) {
+    const err = new Error(
+      `session queue is full (sessionKey=${sessionKey}, maxPending=${sessionPendingLimit})`,
+    )
+    err.code = "SESSION_QUEUE_FULL"
+    return Promise.reject(err)
+  }
+
+  pendingCounts.set(sessionKey, pending + 1)
+  const prev = messageInflight.get(sessionKey) || Promise.resolve()
+  const next = prev
+    .catch(() => {})
+    .then(() => handleUserText(tenantKey, chatId, text))
+    .catch((err) => {
+      console.error("handle message failed:", err?.message || err)
+    })
+    .finally(() => {
+      const remain = (pendingCounts.get(sessionKey) || 1) - 1
+      if (remain <= 0) {
+        pendingCounts.delete(sessionKey)
+      } else {
+        pendingCounts.set(sessionKey, remain)
+      }
+      if (messageInflight.get(sessionKey) === next) {
+        messageInflight.delete(sessionKey)
+      }
     })
 
-    if (result.error) {
-      await sendTextToChat(tenantKey, chatId, "Sorry, I had trouble processing your message.")
-      return
-    }
-
-    const response = result.data
-    const responseText = buildResponseText(response)
-
-    await sendTextToChat(tenantKey, chatId, responseText)
-  })
+  messageInflight.set(sessionKey, next)
+  return next
 }
 
 async function handleToolUpdate(part) {
   const update = getCompletedToolUpdate(part)
   if (!update) return
 
-  const sessionId = update.sessionId
-  for (const session of sessions.values()) {
-    if (session.sessionId !== sessionId) continue
-    await sendTextToChat(
-      session.tenantKey,
-      session.chatId,
-      `${update.tool} - ${update.title}`,
-    )
-    break
-  }
+  const session = sessionsById.get(update.sessionId)
+  if (!session) return
+  await sendTextToChat(
+    session.tenantKey,
+    session.chatId,
+    `${update.tool} - ${update.title}`,
+  )
 }
 
-;(async () => {
-  const events = await opencode.client.event.subscribe()
-  for await (const event of events.stream) {
-    if (event?.type !== "message.part.updated") continue
+void runEventSubscriptionLoop({
+  label: "feishu event subscription",
+  subscribe: () =>
+    withTimeout(
+      (signal) => opencode.client.event.subscribe(undefined, { signal }),
+      "feishu event.subscribe",
+    ),
+  onEvent: async (event) => {
+    if (event?.type !== "message.part.updated") return
     const part = event?.properties?.part
     await handleToolUpdate(part)
-  }
-})().catch((err) => {
-  console.error("event subscription failed:", err)
-  process.exitCode = 1
+  },
 })
 
 const dispatcher = new lark.EventDispatcher({
@@ -159,8 +334,16 @@ const dispatcher = new lark.EventDispatcher({
     }
 
     queueMicrotask(() => {
-      handleUserText(tenantKey, chatId, text).catch((err) => {
-        console.error("handle message failed:", err)
+      enqueueChatMessage(tenantKey, chatId, text).catch((err) => {
+        if (err?.code === "SESSION_QUEUE_FULL") {
+          sendTextToChat(
+            tenantKey,
+            chatId,
+            "Sorry, I'm handling too many messages in this chat. Please try again shortly.",
+          ).catch(() => {})
+          return
+        }
+        console.error("feishu enqueue message failed:", err?.message || err)
       })
     })
   },
