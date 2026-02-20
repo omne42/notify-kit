@@ -346,7 +346,6 @@ pub(crate) async fn select_http_client(
         host: host.to_string(),
         timeout,
     };
-    let mut build_lock_cleanup = PinnedClientBuildLockCleanupGuard::new(key.clone());
 
     let lookup_now = Instant::now();
     {
@@ -358,6 +357,7 @@ pub(crate) async fn select_http_client(
         }
     }
 
+    let mut build_lock_cleanup = PinnedClientBuildLockCleanupGuard::new(key.clone());
     let key_lock = {
         let mut locks = lock_pinned_client_build_locks();
         locks.retain(|_, lock| lock.strong_count() > 0);

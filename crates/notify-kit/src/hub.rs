@@ -136,6 +136,9 @@ impl Hub {
     /// - `Err(TryNotifyError::NoTokioRuntime)` if called outside a Tokio runtime.
     /// - `Err(TryNotifyError::Overloaded)` when Hub inflight capacity is full.
     pub fn try_notify(&self, event: Event) -> Result<(), TryNotifyError> {
+        if self.inner.sinks.is_empty() {
+            return Ok(());
+        }
         if !self.is_kind_enabled(event.kind.as_str()) {
             return Ok(());
         }
@@ -324,9 +327,20 @@ mod tests {
 
     #[test]
     fn try_notify_errors_without_tokio_runtime() {
-        let hub = Hub::new(HubConfig::default(), Vec::new());
+        let sinks: Vec<Arc<dyn Sink>> = vec![Arc::new(TestSink {
+            name: "ok",
+            behavior: TestSinkBehavior::Ok,
+        })];
+        let hub = Hub::new(HubConfig::default(), sinks);
         let event = Event::new("kind", Severity::Info, "title");
         assert_eq!(hub.try_notify(event), Err(TryNotifyError::NoTokioRuntime));
+    }
+
+    #[test]
+    fn try_notify_is_noop_without_tokio_runtime_when_no_sinks() {
+        let hub = Hub::new(HubConfig::default(), Vec::new());
+        let event = Event::new("kind", Severity::Info, "title");
+        assert_eq!(hub.try_notify(event), Ok(()));
     }
 
     #[test]
