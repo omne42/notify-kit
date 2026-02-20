@@ -184,7 +184,12 @@ impl Hub {
 
 impl HubInner {
     async fn send(self: Arc<Self>, event: Arc<Event>) -> crate::Result<()> {
-        let mut failures: Vec<(usize, &'static str, crate::Error)> = Vec::new();
+        if self.sinks.is_empty() {
+            return Ok(());
+        }
+
+        let mut failures: Vec<(usize, &'static str, crate::Error)> =
+            Vec::with_capacity(self.sinks.len());
         let max_parallel = self.max_sink_sends_in_parallel.max(1);
         let timeout = self.per_sink_timeout;
         let mut sink_iter = self.sinks.iter().cloned().enumerate();
@@ -229,7 +234,8 @@ impl HubInner {
         }
 
         failures.sort_unstable_by_key(|(idx, _, _)| *idx);
-        let mut msg = String::from("one or more sinks failed:");
+        let mut msg = String::with_capacity(24 + failures.len().saturating_mul(64));
+        msg.push_str("one or more sinks failed:");
         for (_idx, name, err) in failures {
             msg.push('\n');
             msg.push_str("- ");

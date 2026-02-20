@@ -92,9 +92,11 @@ impl std::fmt::Debug for BarkSink {
 
 impl BarkSink {
     pub fn new(config: BarkConfig) -> crate::Result<Self> {
-        if config.device_key.trim().is_empty() {
+        let device_key = config.device_key.trim();
+        if device_key.is_empty() {
             return Err(anyhow::anyhow!("bark device_key must not be empty").into());
         }
+        let group = normalize_optional_trimmed(config.group);
 
         let api_url =
             parse_and_validate_https_url("https://api.day.app/push", &BARK_ALLOWED_HOSTS)?;
@@ -103,8 +105,8 @@ impl BarkSink {
         let client = build_http_client(config.timeout)?;
         Ok(Self {
             api_url,
-            device_key: config.device_key,
-            group: config.group,
+            device_key: device_key.to_string(),
+            group,
             client,
             timeout: config.timeout,
             max_chars: config.max_chars,
@@ -126,13 +128,18 @@ impl BarkSink {
         obj.insert("title".to_string(), serde_json::json!(title));
         obj.insert("body".to_string(), serde_json::json!(body));
         if let Some(group) = group {
-            let group = group.trim();
-            if !group.is_empty() {
-                obj.insert("group".to_string(), serde_json::json!(group));
-            }
+            obj.insert("group".to_string(), serde_json::json!(group));
         }
         serde_json::Value::Object(obj)
     }
+}
+
+fn normalize_optional_trimmed(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
 }
 
 impl Sink for BarkSink {
@@ -277,5 +284,13 @@ mod tests {
         let cfg = BarkConfig::new("   ");
         let err = BarkSink::new(cfg).expect_err("expected invalid config");
         assert!(err.to_string().contains("device_key"), "{err:#}");
+    }
+
+    #[test]
+    fn trims_device_key_and_group() {
+        let cfg = BarkConfig::new(" key ").with_group(" team ");
+        let sink = BarkSink::new(cfg).expect("build sink");
+        assert_eq!(sink.device_key, "key");
+        assert_eq!(sink.group.as_deref(), Some("team"));
     }
 }

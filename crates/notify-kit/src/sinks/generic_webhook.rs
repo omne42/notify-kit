@@ -123,95 +123,114 @@ impl std::fmt::Debug for GenericWebhookSink {
 
 impl GenericWebhookSink {
     pub fn new(config: GenericWebhookConfig) -> crate::Result<Self> {
-        if config.payload_field.trim().is_empty() {
+        let GenericWebhookConfig {
+            url,
+            payload_field,
+            timeout,
+            max_chars,
+            enforce_public_ip,
+            path_prefix,
+            allowed_hosts,
+        } = config;
+
+        let payload_field = payload_field.trim();
+        if payload_field.is_empty() {
             return Err(anyhow::anyhow!("generic webhook payload_field must not be empty").into());
         }
-        if !config.enforce_public_ip && config.allowed_hosts.is_empty() {
+        let path_prefix = path_prefix.and_then(normalize_optional_trimmed);
+        let allowed_hosts = normalize_nonempty_trimmed_vec(allowed_hosts);
+
+        if !enforce_public_ip && allowed_hosts.is_empty() {
             return Err(anyhow::anyhow!(
                 "generic webhook disabling public ip check requires allowed_hosts"
             )
             .into());
         }
 
-        let url = parse_and_validate_https_url_basic(&config.url)?;
-        if let Some(prefix) = config.path_prefix.as_deref() {
+        let url = parse_and_validate_https_url_basic(&url)?;
+        if let Some(prefix) = path_prefix.as_deref() {
             validate_url_path_prefix(&url, prefix)?;
         }
 
-        if !config.allowed_hosts.is_empty() {
+        if !allowed_hosts.is_empty() {
             let Some(host) = url.host_str() else {
                 return Err(anyhow::anyhow!("url must have a host").into());
             };
-            let allowed = config
-                .allowed_hosts
-                .iter()
-                .any(|h| host.eq_ignore_ascii_case(h));
+            let allowed = allowed_hosts.iter().any(|h| host.eq_ignore_ascii_case(h));
             if !allowed {
                 return Err(anyhow::anyhow!("url host is not allowed").into());
             }
         }
 
-        let client = build_http_client(config.timeout)?;
+        let client = build_http_client(timeout)?;
         Ok(Self {
             url,
-            payload_field: config.payload_field,
+            payload_field: payload_field.to_string(),
             client,
-            timeout: config.timeout,
-            max_chars: config.max_chars,
-            enforce_public_ip: config.enforce_public_ip,
+            timeout,
+            max_chars,
+            enforce_public_ip,
         })
     }
 
     pub fn new_strict(config: GenericWebhookConfig) -> crate::Result<Self> {
-        if !config.enforce_public_ip {
+        let GenericWebhookConfig {
+            url,
+            payload_field,
+            timeout,
+            max_chars,
+            enforce_public_ip,
+            path_prefix,
+            allowed_hosts,
+        } = config;
+
+        if !enforce_public_ip {
             return Err(
                 anyhow::anyhow!("generic webhook strict mode requires public ip check").into(),
             );
         }
-        if config.allowed_hosts.is_empty() {
+        if allowed_hosts.is_empty() {
             return Err(
                 anyhow::anyhow!("generic webhook strict mode requires allowed_hosts").into(),
             );
         }
-        let Some(path_prefix) = config.path_prefix.as_deref() else {
+        let Some(path_prefix) = path_prefix.and_then(normalize_optional_trimmed) else {
             return Err(anyhow::anyhow!("generic webhook strict mode requires path_prefix").into());
         };
-        let path_prefix = path_prefix.trim();
-        if path_prefix.is_empty() || !path_prefix.starts_with('/') {
+        if !path_prefix.starts_with('/') {
             return Err(anyhow::anyhow!(
                 "generic webhook strict mode requires path_prefix starting with '/'"
             )
             .into());
         }
-        if config.allowed_hosts.iter().any(|h| h.trim().is_empty()) {
+        if allowed_hosts.iter().any(|h| h.trim().is_empty()) {
             return Err(anyhow::anyhow!("generic webhook allowed_hosts must not be empty").into());
         }
-        if config.payload_field.trim().is_empty() {
+        let payload_field = payload_field.trim();
+        if payload_field.is_empty() {
             return Err(anyhow::anyhow!("generic webhook payload_field must not be empty").into());
         }
+        let allowed_hosts = normalize_nonempty_trimmed_vec(allowed_hosts);
 
-        let url = parse_and_validate_https_url_basic(&config.url)?;
-        validate_url_path_prefix(&url, path_prefix)?;
+        let url = parse_and_validate_https_url_basic(&url)?;
+        validate_url_path_prefix(&url, &path_prefix)?;
 
         let Some(host) = url.host_str() else {
             return Err(anyhow::anyhow!("url must have a host").into());
         };
-        let allowed = config
-            .allowed_hosts
-            .iter()
-            .any(|h| host.eq_ignore_ascii_case(h));
+        let allowed = allowed_hosts.iter().any(|h| host.eq_ignore_ascii_case(h));
         if !allowed {
             return Err(anyhow::anyhow!("url host is not allowed").into());
         }
 
-        let client = build_http_client(config.timeout)?;
+        let client = build_http_client(timeout)?;
         Ok(Self {
             url,
-            payload_field: config.payload_field,
+            payload_field: payload_field.to_string(),
             client,
-            timeout: config.timeout,
-            max_chars: config.max_chars,
-            enforce_public_ip: config.enforce_public_ip,
+            timeout,
+            max_chars,
+            enforce_public_ip,
         })
     }
 
@@ -219,6 +238,21 @@ impl GenericWebhookSink {
         let text = format_event_text_limited(event, TextLimits::new(max_chars));
         serde_json::json!({ payload_field: text })
     }
+}
+
+fn normalize_optional_trimmed(value: String) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+fn normalize_nonempty_trimmed_vec(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .filter_map(normalize_optional_trimmed)
+        .collect()
 }
 
 impl Sink for GenericWebhookSink {
@@ -375,5 +409,17 @@ mod tests {
         );
         let err = GenericWebhookSink::new_strict(cfg).expect_err("expected invalid path");
         assert!(err.to_string().contains("path is not allowed"), "{err:#}");
+    }
+
+    #[test]
+    fn trims_payload_field_allowed_hosts_and_path_prefix() {
+        let cfg = GenericWebhookConfig::new("https://example.com/hooks/notify")
+            .with_payload_field(" text ")
+            .with_allowed_hosts(vec![" example.com ".to_string()])
+            .with_path_prefix(" /hooks/ ");
+        let sink = GenericWebhookSink::new(cfg).expect("build sink");
+        assert_eq!(sink.payload_field, "text");
+        assert_eq!(sink.url.host_str().unwrap_or(""), "example.com");
+        assert!(sink.url.path().starts_with("/hooks/"));
     }
 }

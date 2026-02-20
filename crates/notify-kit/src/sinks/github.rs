@@ -86,24 +86,25 @@ impl std::fmt::Debug for GitHubCommentSink {
 
 impl GitHubCommentSink {
     pub fn new(config: GitHubCommentConfig) -> crate::Result<Self> {
-        validate_github_identifier("owner", &config.owner)?;
-        validate_github_identifier("repo", &config.repo)?;
+        let owner = normalize_github_identifier("owner", &config.owner)?;
+        let repo = normalize_github_identifier("repo", &config.repo)?;
         if config.issue_number == 0 {
             return Err(anyhow::anyhow!("github issue_number must be > 0").into());
         }
-        if config.token.trim().is_empty() {
+        let token = config.token.trim();
+        if token.is_empty() {
             return Err(anyhow::anyhow!("github token must not be empty").into());
         }
 
-        let api_url = build_issue_comment_url(&config.owner, &config.repo, config.issue_number)?;
+        let api_url = build_issue_comment_url(owner, repo, config.issue_number)?;
         let client = build_http_client(config.timeout)?;
 
         Ok(Self {
             api_url,
-            owner: config.owner,
-            repo: config.repo,
+            owner: owner.to_string(),
+            repo: repo.to_string(),
             issue_number: config.issue_number,
-            token: config.token,
+            token: token.to_string(),
             client,
             max_chars: config.max_chars,
         })
@@ -115,7 +116,7 @@ impl GitHubCommentSink {
     }
 }
 
-fn validate_github_identifier(kind: &'static str, value: &str) -> crate::Result<()> {
+fn normalize_github_identifier<'a>(kind: &'static str, value: &'a str) -> crate::Result<&'a str> {
     let value = value.trim();
     if value.is_empty() {
         return Err(anyhow::anyhow!("github {kind} must not be empty").into());
@@ -129,7 +130,7 @@ fn validate_github_identifier(kind: &'static str, value: &str) -> crate::Result<
     {
         return Err(anyhow::anyhow!("github {kind} contains invalid characters").into());
     }
-    Ok(())
+    Ok(value)
 }
 
 fn build_issue_comment_url(
@@ -238,5 +239,14 @@ mod tests {
         assert!(!sink_dbg.contains("tok_secret"), "{sink_dbg}");
         assert!(sink_dbg.contains("api.github.com"), "{sink_dbg}");
         assert!(sink_dbg.contains("<redacted>"), "{sink_dbg}");
+    }
+
+    #[test]
+    fn trims_owner_repo_and_token() {
+        let cfg = GitHubCommentConfig::new(" owner ", " repo ", 1, " tok ");
+        let sink = GitHubCommentSink::new(cfg).expect("build sink");
+        assert_eq!(sink.owner, "owner");
+        assert_eq!(sink.repo, "repo");
+        assert_eq!(sink.token, "tok");
     }
 }

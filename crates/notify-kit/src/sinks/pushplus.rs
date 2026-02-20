@@ -120,9 +120,13 @@ impl std::fmt::Debug for PushPlusSink {
 
 impl PushPlusSink {
     pub fn new(config: PushPlusConfig) -> crate::Result<Self> {
-        if config.token.trim().is_empty() {
+        let token = config.token.trim();
+        if token.is_empty() {
             return Err(anyhow::anyhow!("pushplus token must not be empty").into());
         }
+        let channel = normalize_optional_trimmed(config.channel);
+        let template = normalize_optional_trimmed(config.template);
+        let topic = normalize_optional_trimmed(config.topic);
 
         let api_url = parse_and_validate_https_url(
             "https://www.pushplus.plus/send",
@@ -133,10 +137,10 @@ impl PushPlusSink {
         let client = build_http_client(config.timeout)?;
         Ok(Self {
             api_url,
-            token: config.token,
-            channel: config.channel,
-            template: config.template,
-            topic: config.topic,
+            token: token.to_string(),
+            channel,
+            template,
+            topic,
             client,
             timeout: config.timeout,
             max_chars: config.max_chars,
@@ -161,26 +165,25 @@ impl PushPlusSink {
         obj.insert("content".to_string(), serde_json::json!(content));
 
         if let Some(channel) = channel {
-            let channel = channel.trim();
-            if !channel.is_empty() {
-                obj.insert("channel".to_string(), serde_json::json!(channel));
-            }
+            obj.insert("channel".to_string(), serde_json::json!(channel));
         }
         if let Some(template) = template {
-            let template = template.trim();
-            if !template.is_empty() {
-                obj.insert("template".to_string(), serde_json::json!(template));
-            }
+            obj.insert("template".to_string(), serde_json::json!(template));
         }
         if let Some(topic) = topic {
-            let topic = topic.trim();
-            if !topic.is_empty() {
-                obj.insert("topic".to_string(), serde_json::json!(topic));
-            }
+            obj.insert("topic".to_string(), serde_json::json!(topic));
         }
 
         serde_json::Value::Object(obj)
     }
+}
+
+fn normalize_optional_trimmed(value: Option<String>) -> Option<String> {
+    value
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
 }
 
 impl Sink for PushPlusSink {
@@ -275,5 +278,18 @@ mod tests {
         let cfg = PushPlusConfig::new("   ");
         let err = PushPlusSink::new(cfg).expect_err("expected invalid config");
         assert!(err.to_string().contains("token"), "{err:#}");
+    }
+
+    #[test]
+    fn trims_token_and_optional_fields() {
+        let cfg = PushPlusConfig::new(" tok ")
+            .with_channel(" chan ")
+            .with_template(" txt ")
+            .with_topic(" topic ");
+        let sink = PushPlusSink::new(cfg).expect("build sink");
+        assert_eq!(sink.token, "tok");
+        assert_eq!(sink.channel.as_deref(), Some("chan"));
+        assert_eq!(sink.template.as_deref(), Some("txt"));
+        assert_eq!(sink.topic.as_deref(), Some("topic"));
     }
 }

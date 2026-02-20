@@ -72,16 +72,18 @@ impl std::fmt::Debug for TelegramBotSink {
 
 impl TelegramBotSink {
     pub fn new(config: TelegramBotConfig) -> crate::Result<Self> {
-        if config.bot_token.trim().is_empty() {
+        let bot_token = config.bot_token.trim();
+        if bot_token.is_empty() {
             return Err(anyhow::anyhow!("telegram bot_token must not be empty").into());
         }
-        if config.chat_id.trim().is_empty() {
+        let chat_id = config.chat_id.trim();
+        if chat_id.is_empty() {
             return Err(anyhow::anyhow!("telegram chat_id must not be empty").into());
         }
 
         let mut api_url = reqwest::Url::parse(TELEGRAM_API_BASE)
             .map_err(|err| anyhow::anyhow!("invalid telegram api base url: {err}"))?;
-        let bot_segment = format!("bot{}", config.bot_token);
+        let bot_segment = format!("bot{bot_token}");
         api_url
             .path_segments_mut()
             .map_err(|_| anyhow::anyhow!("invalid telegram api base url"))?
@@ -91,7 +93,7 @@ impl TelegramBotSink {
         let client = build_http_client(config.timeout)?;
         Ok(Self {
             api_url,
-            chat_id: config.chat_id,
+            chat_id: chat_id.to_string(),
             client,
             max_chars: config.max_chars,
         })
@@ -209,5 +211,27 @@ mod tests {
         let path = sink.api_url.path();
         assert!(path.starts_with("/bot"), "{path}");
         assert!(path.ends_with("/sendMessage"), "{path}");
+    }
+
+    #[test]
+    fn trims_bot_token_and_chat_id() {
+        let cfg = TelegramBotConfig::new(" token:secret ", " 123 ");
+        let sink = TelegramBotSink::new(cfg).expect("build sink");
+        assert_eq!(sink.chat_id, "123");
+        assert!(
+            sink.api_url.path().starts_with("/bot"),
+            "{}",
+            sink.api_url.path()
+        );
+        assert!(
+            sink.api_url.path().ends_with("/sendMessage"),
+            "{}",
+            sink.api_url.path()
+        );
+        assert!(
+            !sink.api_url.as_str().contains("%20"),
+            "{}",
+            sink.api_url.as_str()
+        );
     }
 }
