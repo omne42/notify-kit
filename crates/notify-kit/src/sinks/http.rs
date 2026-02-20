@@ -30,9 +30,12 @@ static PINNED_CLIENT_CACHE: OnceLock<RwLock<HashMap<PinnedClientKey, CachedPinne
 static PINNED_CLIENT_BUILD_LOCKS: OnceLock<Mutex<HashMap<PinnedClientKey, Weak<TokioMutex<()>>>>> =
     OnceLock::new();
 static DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+static DNS_LOOKUP_TIMEOUT_MESSAGE: OnceLock<String> = OnceLock::new();
 
-fn dns_lookup_timeout_message() -> String {
-    format!("dns lookup timeout (capped at {DEFAULT_DNS_LOOKUP_TIMEOUT:?})")
+fn dns_lookup_timeout_message() -> &'static str {
+    DNS_LOOKUP_TIMEOUT_MESSAGE
+        .get_or_init(|| format!("dns lookup timeout (capped at {DEFAULT_DNS_LOOKUP_TIMEOUT:?})"))
+        .as_str()
 }
 
 fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinnedClient>> {
@@ -87,7 +90,7 @@ fn dns_lookup_semaphore() -> &'static Arc<Semaphore> {
 fn remaining_dns_timeout(deadline: Instant) -> crate::Result<Duration> {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if remaining == Duration::ZERO {
-        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
+        return Err(anyhow::anyhow!(dns_lookup_timeout_message()).into());
     }
     Ok(remaining)
 }
@@ -284,29 +287,29 @@ async fn resolve_url_to_public_addrs_async(
 
     let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
     if dns_timeout == Duration::ZERO {
-        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
+        return Err(anyhow::anyhow!(dns_lookup_timeout_message()).into());
     }
 
     let deadline = Instant::now() + dns_timeout;
-    let permit = tokio::time::timeout(
-        remaining_dns_timeout(deadline)?,
-        dns_lookup_semaphore().acquire(),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
-    .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
+    let lookup = {
+        let _permit = tokio::time::timeout(
+            remaining_dns_timeout(deadline)?,
+            dns_lookup_semaphore().acquire(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!(dns_lookup_timeout_message()))?
+        .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
 
-    let lookup = tokio::time::timeout(
-        remaining_dns_timeout(deadline)?,
-        tokio::net::lookup_host((host, 443)),
-    )
-    .await
-    .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
-    .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))?;
+        tokio::time::timeout(
+            remaining_dns_timeout(deadline)?,
+            tokio::net::lookup_host((host, 443)),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!(dns_lookup_timeout_message()))?
+        .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))?
+    };
 
-    let out = validate_public_addrs(lookup)?;
-    drop(permit);
-    Ok(out)
+    validate_public_addrs(lookup)
 }
 
 pub(crate) async fn build_http_client_pinned_async(
@@ -318,12 +321,7 @@ pub(crate) async fn build_http_client_pinned_async(
         .ok_or_else(|| anyhow::anyhow!("url must have a host"))?
         .to_string();
 
-    let dns_timeout = timeout.min(DEFAULT_DNS_LOOKUP_TIMEOUT);
-    if dns_timeout == Duration::ZERO {
-        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
-    }
-
-    let addrs = resolve_url_to_public_addrs_async(url, dns_timeout).await?;
+    let addrs = resolve_url_to_public_addrs_async(url, timeout).await?;
 
     build_http_client_builder(timeout)
         .resolve_to_addrs(&host, &addrs)

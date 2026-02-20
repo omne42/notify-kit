@@ -47,6 +47,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 
 ### Changed
 - `Hub::notify` / `Hub::send`：在无 sink 场景提前返回，避免不必要的 Tokio runtime 探测与 semaphore 开销。
+- Webhook/API sinks: DNS 并发门控的 permit 生命周期收敛到“实际 DNS 查询”阶段，减少解析后地址校验阶段对并发额度的占用。
+- Webhook/API sinks: 统一复用 `dns lookup timeout` 文案的静态缓存，减少超时错误路径的重复字符串分配。
 - Webhook/API sinks: `pinned client` 缓存淘汰候选改为单次 key 克隆，降低缓存接近上限时的额外分配。
 - Webhook/API sinks: DNS 并发门控改为借用式 `SemaphorePermit`，减少每次 DNS 预检的 `Arc` 引用计数开销。
 - Webhook/API sinks: 发送请求时改为借用 `Url` 字符串（`as_str()`），减少热路径的 `Url` 克隆开销。
