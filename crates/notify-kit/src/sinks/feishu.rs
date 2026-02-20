@@ -188,7 +188,7 @@ impl FeishuWebhookSink {
         timestamp: Option<&str>,
         sign: Option<&str>,
     ) -> serde_json::Value {
-        let mut obj = serde_json::Map::new();
+        let mut obj = serde_json::Map::with_capacity(4);
         obj.insert("msg_type".to_string(), serde_json::json!("text"));
         obj.insert(
             "content".to_string(),

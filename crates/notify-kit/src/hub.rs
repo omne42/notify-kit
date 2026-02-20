@@ -169,7 +169,7 @@ impl Hub {
             .acquire()
             .await
             .map_err(|_| anyhow::anyhow!("hub inflight semaphore closed"))?;
-        self.inner.clone().send(&event).await
+        self.inner.send(&event).await
     }
 
     fn is_kind_enabled(&self, kind: &str) -> bool {
@@ -228,7 +228,7 @@ impl HubInner {
         (idx, name, result)
     }
 
-    async fn send(self: Arc<Self>, event: &Event) -> crate::Result<()> {
+    async fn send(&self, event: &Event) -> crate::Result<()> {
         if self.sinks.is_empty() {
             return Ok(());
         }

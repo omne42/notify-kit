@@ -123,7 +123,7 @@ impl BarkSink {
         let title = truncate_chars(&event.title, 256);
         let body = format_event_body_and_tags_limited(event, TextLimits::new(max_chars));
 
-        let mut obj = serde_json::Map::new();
+        let mut obj = serde_json::Map::with_capacity(4);
         obj.insert("device_key".to_string(), serde_json::json!(device_key));
         obj.insert("title".to_string(), serde_json::json!(title));
         obj.insert("body".to_string(), serde_json::json!(body));
