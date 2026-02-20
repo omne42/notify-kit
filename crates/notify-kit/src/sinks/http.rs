@@ -47,6 +47,14 @@ fn dns_lookup_semaphore() -> &'static Arc<Semaphore> {
     DNS_LOOKUP_SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT)))
 }
 
+fn remaining_dns_timeout(deadline: Instant) -> crate::Result<Duration> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining == Duration::ZERO {
+        return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
+    }
+    Ok(remaining)
+}
+
 fn cap_pinned_client_cache_entries(
     cache: &mut HashMap<PinnedClientKey, CachedPinnedClient>,
     max: usize,
@@ -253,15 +261,22 @@ async fn resolve_url_to_public_addrs_async(
         return Err(anyhow::anyhow!("{}", dns_lookup_timeout_message()).into());
     }
 
-    let permit = tokio::time::timeout(dns_timeout, dns_lookup_semaphore().clone().acquire_owned())
-        .await
-        .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
-        .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
+    let deadline = Instant::now() + dns_timeout;
+    let permit = tokio::time::timeout(
+        remaining_dns_timeout(deadline)?,
+        dns_lookup_semaphore().clone().acquire_owned(),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
+    .map_err(|_| anyhow::anyhow!("dns lookup failed"))?;
 
-    let lookup = tokio::time::timeout(dns_timeout, tokio::net::lookup_host((host, 443)))
-        .await
-        .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
-        .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))?;
+    let lookup = tokio::time::timeout(
+        remaining_dns_timeout(deadline)?,
+        tokio::net::lookup_host((host, 443)),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
+    .map_err(|err| anyhow::anyhow!("dns lookup failed: {err}"))?;
 
     let out = validate_public_addrs(lookup)?;
     drop(permit);
@@ -303,12 +318,11 @@ pub(crate) async fn select_http_client(
     let host = url
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("url must have a host"))?;
-    let timeout_ms = timeout.as_millis().min(u64::MAX as u128) as u64;
+    let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
     let key = PinnedClientKey {
         host: host.to_string(),
         timeout_ms,
     };
-    let key_for_eviction = key.clone();
 
     let lookup_now = Instant::now();
     {
@@ -375,7 +389,7 @@ pub(crate) async fn select_http_client(
                 cap_pinned_client_cache_entries(
                     &mut cache,
                     DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES,
-                    &key_for_eviction,
+                    &key,
                 );
                 drop(cache);
                 Ok(client)
@@ -670,7 +684,7 @@ mod tests {
     use super::*;
     use std::net::IpAddr;
     use std::str::FromStr;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn redact_url_str_never_leaks_path_or_query() {
@@ -750,6 +764,21 @@ mod tests {
         assert!(is_public_ip(IpAddr::from_str("::ffff:8.8.8.8").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("64:ff9b::808:808").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("2002:808:808::1").unwrap()));
+    }
+
+    #[test]
+    fn remaining_dns_timeout_accepts_future_deadline() {
+        let remaining =
+            remaining_dns_timeout(Instant::now() + Duration::from_millis(10)).expect("timeout");
+        assert!(remaining > Duration::ZERO);
+        assert!(remaining <= Duration::from_millis(10));
+    }
+
+    #[test]
+    fn remaining_dns_timeout_rejects_elapsed_deadline() {
+        let err =
+            remaining_dns_timeout(Instant::now()).expect_err("elapsed deadline should be rejected");
+        assert!(err.to_string().contains("dns lookup timeout"), "{err:#}");
     }
 
     #[test]

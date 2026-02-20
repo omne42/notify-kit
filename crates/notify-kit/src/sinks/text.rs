@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::Event;
 
 #[derive(Debug, Clone, Copy)]
@@ -127,8 +129,8 @@ fn format_event_text_parts_limited(
     let mut out = LimitedChars::new(limits.max_chars);
 
     if include_title {
-        let title = truncate_chars(&event.title, limits.max_title_chars);
-        out.push_str(&title);
+        let title = truncate_chars_cow(&event.title, limits.max_title_chars);
+        out.push_str(title.as_ref());
     }
 
     if let Some(body) = event.body.as_deref() {
@@ -137,8 +139,8 @@ fn format_event_text_parts_limited(
             if !out.is_empty() {
                 out.push_char('\n');
             }
-            let body = truncate_chars(body, limits.max_body_chars);
-            out.push_str(&body);
+            let body = truncate_chars_cow(body, limits.max_body_chars);
+            out.push_str(body.as_ref());
         }
     }
 
@@ -149,11 +151,11 @@ fn format_event_text_parts_limited(
         if !out.is_empty() {
             out.push_char('\n');
         }
-        let key = truncate_chars(k, limits.max_tag_key_chars);
-        out.push_str(&key);
+        let key = truncate_chars_cow(k, limits.max_tag_key_chars);
+        out.push_str(key.as_ref());
         out.push_char('=');
-        let value = truncate_chars(v, limits.max_tag_value_chars);
-        out.push_str(&value);
+        let value = truncate_chars_cow(v, limits.max_tag_value_chars);
+        out.push_str(value.as_ref());
     }
 
     out.finish()
@@ -167,14 +169,14 @@ pub(crate) fn format_event_body_and_tags_limited(event: &Event, limits: TextLimi
     format_event_text_parts_limited(event, limits, false)
 }
 
-pub(crate) fn truncate_chars(input: &str, max_chars: usize) -> String {
+fn truncate_chars_cow(input: &str, max_chars: usize) -> Cow<'_, str> {
     if max_chars == 0 {
-        return String::new();
+        return Cow::Borrowed("");
     }
 
     let end = byte_index_after_n_chars(input, max_chars);
     if end == input.len() {
-        return input.to_string();
+        return Cow::Borrowed(input);
     }
 
     if max_chars > 3 {
@@ -182,10 +184,14 @@ pub(crate) fn truncate_chars(input: &str, max_chars: usize) -> String {
         let mut out = String::with_capacity(keep_end + 3);
         out.push_str(&input[..keep_end]);
         out.push_str("...");
-        return out;
+        return Cow::Owned(out);
     }
 
-    input[..end].to_string()
+    Cow::Borrowed(&input[..end])
+}
+
+pub(crate) fn truncate_chars(input: &str, max_chars: usize) -> String {
+    truncate_chars_cow(input, max_chars).into_owned()
 }
 
 #[cfg(test)]
@@ -211,6 +217,13 @@ mod tests {
         let input = "abcdef";
         let out = truncate_chars(input, 5);
         assert_eq!(out, "ab...");
+    }
+
+    #[test]
+    fn truncate_chars_cow_borrows_when_not_truncated() {
+        let input = "abc";
+        let out = truncate_chars_cow(input, 10);
+        assert!(matches!(out, std::borrow::Cow::Borrowed("abc")));
     }
 
     #[test]

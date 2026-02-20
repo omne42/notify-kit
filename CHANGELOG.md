@@ -54,6 +54,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
 - `GenericWebhookSink`：关闭 DNS 公网 IP 校验时，要求同时配置 `allowed_hosts`（减少 SSRF 风险）。
 - `bots/_shared/limiter`：队列出队从 `Array.shift()` 改为游标 + 周期压缩，避免高积压时的 O(n) 复制开销。
+- `sinks/text`：字段截断在“未发生截断”的常见路径改为复用借用字符串，减少临时 `String` 分配与拷贝。
 - `bots/opencode-slack` / `bots/opencode-feishu` / `bots/opencode-wecom` / `bots/opencode-dingtalk-stream`：tool update 路径改为 `sessionId` 反向索引查找，避免每次事件线性扫描全部会话。
 - Docs: 统一为 mdBook 文档（`./scripts/docs.sh` 本地预览/测试）。
 - Docs: 文档 Rust 代码示例统一标注为 `edition2024`。
@@ -86,6 +87,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: IPv4 公网 IP 判定补齐更多 RFC6890 特殊用途网段（例如 `192.0.0.0/24`、`192.88.99.0/24`）。
 - Webhook/API sinks: `dns lookup timeout` 错误现在会注明 DNS 超时上限为 `2s`（`min(timeout, 2s)`）。
 - Webhook/API sinks: `dns lookup failed` 错误现在会保留底层错误信息（便于排障）。
+- Webhook/API sinks: DNS 公网 IP 预检的超时预算现在按“总时限”生效（信号量等待 + DNS 查询共享同一 budget），避免高并发下超时被阶段性叠加放大。
 - Webhook/API sinks: `decode json failed` 错误现在会保留底层解析错误信息（便于排障）。
 - Webhook/API sinks: URL path 前缀校验改为“段边界匹配”（例如 `/send` 不再匹配 `/sendMessage`），减少误放行。
 - Webhook/API sinks: DNS 解析结果去重改为 `HashSet`（避免 O(n²) 扫描）。
