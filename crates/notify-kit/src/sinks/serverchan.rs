@@ -88,18 +88,19 @@ impl std::fmt::Debug for ServerChanSink {
 
 impl ServerChanSink {
     pub fn new(config: ServerChanConfig) -> crate::Result<Self> {
-        let (kind, api_url) = build_serverchan_url(&config.send_key)?;
-        let api_url_str = api_url.as_str().to_string();
+        let (kind, raw_api_url) = build_serverchan_url(&config.send_key)?;
 
         let api_url = match kind {
             ServerChanKind::Turbo => {
-                let url =
-                    parse_and_validate_https_url(&api_url_str, &SERVERCHAN_TURBO_ALLOWED_HOSTS)?;
+                let url = parse_and_validate_https_url(
+                    raw_api_url.as_str(),
+                    &SERVERCHAN_TURBO_ALLOWED_HOSTS,
+                )?;
                 validate_url_path_prefix(&url, "/")?;
                 url
             }
             ServerChanKind::Sc3 => {
-                let url = parse_and_validate_https_url_basic(&api_url_str)?;
+                let url = parse_and_validate_https_url_basic(raw_api_url.as_str())?;
                 validate_url_path_prefix(&url, "/send/")?;
                 url
             }

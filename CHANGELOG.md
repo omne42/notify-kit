@@ -54,6 +54,9 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `Hub`：`notify/try_notify` 日志路径不再为 `Event.kind` 进行多余的 `String` 克隆；过载丢弃路径也避免提前分配 `Arc<Event>`。
 - `Hub`：聚合 sink 错误消息时改为直接写入 `String`（减少临时 `format!` 分配）。
 - `Hub`：sink 执行结果归一化改为单路径表达式（timeout/panic），减少发送热路径中的分支与临时匹配开销。
+- Webhook/API sinks: 文本响应体解码优先走 `String::from_utf8`，在合法 UTF-8 常见路径下避免一次额外拷贝，降低瞬时内存占用。
+- Webhook/API sinks: DNS 解析结果去重时基于迭代器容量提示预分配容器，减少多地址返回场景下的扩容开销。
+- `ServerChanSink::new`：URL 二次校验改为直接借用 `&str`，移除冗余临时 `String` 分配。
 - `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
 - All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
@@ -76,6 +79,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `GitHubCommentSink` / `TelegramBotSink` / `BarkSink` / `PushPlusSink`：关键配置（token、chat_id、device_key 等）现在会在构造阶段去除首尾空白，修复“校验通过但请求参数含空白导致发送失败”的问题。
 - `bots/_shared/session_store`：删除不存在 key 时不再标记 dirty 并触发 flush，避免无效磁盘写入与多余 I/O。
 - `SlackWebhookSink` / `DiscordWebhookSink` / `BarkSink`：当错误信息已包含响应摘要时，不再附加“response body omitted”的矛盾文案。
+- `BarkSink`：当 API 错误信息已包含 `message` 摘要时，不再附带“response body omitted”的矛盾文案。
 - `Hub`：在提升并发发送吞吐后，失败汇总顺序仍按 sink 配置顺序稳定输出（避免并发完成顺序导致错误列表抖动）。
 - `SoundSink`：外部命令会被回收（避免僵尸进程累积）。
 - `SoundSink`：等待子进程改为使用 Tokio 的 blocking pool（避免线程创建失败导致 panic）。

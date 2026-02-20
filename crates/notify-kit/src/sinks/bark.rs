@@ -142,6 +142,14 @@ fn normalize_optional_trimmed(value: Option<String>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn bark_api_error(code: i64, message: &str) -> crate::Error {
+    let message = truncate_chars(message, 200);
+    if message.is_empty() {
+        return anyhow::anyhow!("bark api error: code={code} (response body omitted)").into();
+    }
+    anyhow::anyhow!("bark api error: code={code}, message={message}").into()
+}
+
 impl Sink for BarkSink {
     fn name(&self) -> &'static str {
         "bark"
@@ -231,16 +239,7 @@ impl Sink for BarkSink {
             }
 
             let message = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
-            let message = truncate_chars(message, 200);
-            if message.is_empty() {
-                return Err(
-                    anyhow::anyhow!("bark api error: code={code} (response body omitted)").into(),
-                );
-            }
-            Err(anyhow::anyhow!(
-                "bark api error: code={code}, message={message} (response body omitted)"
-            )
-            .into())
+            Err(bark_api_error(code, message))
         })
     }
 }
@@ -292,5 +291,13 @@ mod tests {
         let sink = BarkSink::new(cfg).expect("build sink");
         assert_eq!(sink.device_key, "key");
         assert_eq!(sink.group.as_deref(), Some("team"));
+    }
+
+    #[test]
+    fn bark_api_error_message_is_not_contradictory() {
+        let err = bark_api_error(500, "boom");
+        let msg = err.to_string();
+        assert!(msg.contains("message=boom"), "{msg}");
+        assert!(!msg.contains("response body omitted"), "{msg}");
     }
 }

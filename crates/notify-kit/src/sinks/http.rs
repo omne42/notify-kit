@@ -228,11 +228,14 @@ fn validate_public_addrs<I>(addrs: I) -> crate::Result<Vec<SocketAddr>>
 where
     I: IntoIterator<Item = SocketAddr>,
 {
-    let mut out: Vec<SocketAddr> = Vec::new();
-    let mut uniq: HashSet<SocketAddr> = HashSet::new();
-    let mut seen = 0usize;
+    let addrs = addrs.into_iter();
+    let (lower, upper) = addrs.size_hint();
+    let cap = upper.unwrap_or(lower);
+    let mut out: Vec<SocketAddr> = Vec::with_capacity(cap);
+    let mut uniq: HashSet<SocketAddr> = HashSet::with_capacity(cap);
+    let mut seen_any = false;
     for addr in addrs {
-        seen += 1;
+        seen_any = true;
         if !is_public_ip(addr.ip()) {
             return Err(anyhow::anyhow!("resolved ip is not allowed").into());
         }
@@ -241,7 +244,7 @@ where
         }
     }
 
-    if seen == 0 {
+    if !seen_any {
         return Err(anyhow::anyhow!("dns lookup failed").into());
     }
 
@@ -572,14 +575,21 @@ pub(crate) async fn read_text_body_limited(
     max_bytes: usize,
 ) -> crate::Result<String> {
     let (buf, truncated) = read_body_bytes_truncated(resp, max_bytes).await?;
-    let mut out = String::from_utf8_lossy(&buf).into_owned();
+    Ok(decode_text_body_lossy(buf, truncated))
+}
+
+fn decode_text_body_lossy(buf: Vec<u8>, truncated: bool) -> String {
+    let mut out = match String::from_utf8(buf) {
+        Ok(text) => text,
+        Err(err) => String::from_utf8_lossy(&err.into_bytes()).into_owned(),
+    };
     if truncated {
         if !out.is_empty() && !out.ends_with('\n') {
             out.push('\n');
         }
         out.push_str("[truncated]");
     }
-    Ok(out)
+    out
 }
 
 async fn read_body_bytes_limited(
@@ -779,6 +789,27 @@ mod tests {
         let err =
             remaining_dns_timeout(Instant::now()).expect_err("elapsed deadline should be rejected");
         assert!(err.to_string().contains("dns lookup timeout"), "{err:#}");
+    }
+
+    #[test]
+    fn decode_text_body_lossy_reuses_valid_utf8_buffer() {
+        let bytes = b"ok".to_vec();
+        let ptr = bytes.as_ptr();
+        let out = decode_text_body_lossy(bytes, false);
+        assert_eq!(out, "ok");
+        assert_eq!(out.as_ptr(), ptr);
+    }
+
+    #[test]
+    fn decode_text_body_lossy_handles_invalid_utf8() {
+        let out = decode_text_body_lossy(vec![0xff, b'a'], false);
+        assert_eq!(out, "\u{fffd}a");
+    }
+
+    #[test]
+    fn decode_text_body_lossy_marks_truncated_output() {
+        let out = decode_text_body_lossy(b"line".to_vec(), true);
+        assert_eq!(out, "line\n[truncated]");
     }
 
     #[test]
