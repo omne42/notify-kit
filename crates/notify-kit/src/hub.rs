@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use futures_util::future::join_all;
+use futures_util::future::BoxFuture;
+use futures_util::stream::{FuturesUnordered, StreamExt};
 
 use crate::event::Event;
 use crate::sinks::Sink;
@@ -110,9 +111,8 @@ impl Hub {
             return;
         };
 
-        let kind = event.kind.clone();
-        if !self.try_notify_spawn(handle, event) {
-            tracing::warn!(sink = "hub", kind = %kind, "notify dropped: overloaded");
+        if let Err(event) = self.try_notify_spawn(handle, event) {
+            tracing::warn!(sink = "hub", kind = %event.kind, "notify dropped: overloaded");
         }
     }
 
@@ -130,10 +130,9 @@ impl Hub {
             return Err(TryNotifyError::NoTokioRuntime);
         };
 
-        if self.try_notify_spawn(handle, event) {
-            Ok(())
-        } else {
-            Err(TryNotifyError::Overloaded)
+        match self.try_notify_spawn(handle, event) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(TryNotifyError::Overloaded),
         }
     }
 
@@ -161,12 +160,16 @@ impl Hub {
         enabled.contains(kind)
     }
 
-    fn try_notify_spawn(&self, handle: tokio::runtime::Handle, event: Event) -> bool {
+    fn try_notify_spawn(
+        &self,
+        handle: tokio::runtime::Handle,
+        event: Event,
+    ) -> std::result::Result<(), Event> {
         let inner = self.inner.clone();
 
         let permit = match inner.inflight.clone().try_acquire_owned() {
             Ok(permit) => permit,
-            Err(_) => return false,
+            Err(_) => return Err(event),
         };
 
         handle.spawn(async move {
@@ -176,22 +179,21 @@ impl Hub {
                 tracing::warn!(sink = "hub", kind = %event.kind, "notify failed: {err}");
             }
         });
-        true
+        Ok(())
     }
 }
 
 impl HubInner {
     async fn send(self: Arc<Self>, event: Arc<Event>) -> crate::Result<()> {
-        let mut failures: Vec<(&'static str, crate::Error)> = Vec::new();
+        let mut failures: Vec<(usize, &'static str, crate::Error)> = Vec::new();
         let max_parallel = self.max_sink_sends_in_parallel.max(1);
-        for sinks_chunk in self.sinks.chunks(max_parallel) {
-            let mut futures = Vec::with_capacity(sinks_chunk.len());
-            for sink in sinks_chunk {
-                let sink = Arc::clone(sink);
-                let event = event.clone();
-                let timeout = self.per_sink_timeout;
-                let name = sink.name();
-                futures.push(async move {
+        let timeout = self.per_sink_timeout;
+        let mut sink_iter = self.sinks.iter().cloned().enumerate();
+
+        let make_send_future =
+            |idx: usize, sink: Arc<dyn Sink>, event: Arc<Event>| -> BoxFuture<'static, _> {
+                Box::pin(async move {
+                    let name = sink.name();
                     let result = AssertUnwindSafe(async move {
                         match tokio::time::timeout(timeout, sink.send(&event)).await {
                             Ok(inner) => inner,
@@ -205,15 +207,24 @@ impl HubInner {
                         Ok(inner) => inner,
                         Err(_) => Err(anyhow::anyhow!("sink panicked").into()),
                     };
-                    (name, result)
-                });
-            }
+                    (idx, name, result)
+                })
+            };
 
-            for (name, result) in join_all(futures).await {
-                match result {
-                    Ok(()) => {}
-                    Err(err) => failures.push((name, err)),
-                }
+        let mut pending = FuturesUnordered::new();
+        for _ in 0..max_parallel {
+            let Some((idx, sink)) = sink_iter.next() else {
+                break;
+            };
+            pending.push(make_send_future(idx, sink, Arc::clone(&event)));
+        }
+
+        while let Some((idx, name, result)) = pending.next().await {
+            if let Err(err) = result {
+                failures.push((idx, name, err));
+            }
+            if let Some((next_idx, next_sink)) = sink_iter.next() {
+                pending.push(make_send_future(next_idx, next_sink, Arc::clone(&event)));
             }
         }
 
@@ -221,8 +232,9 @@ impl HubInner {
             return Ok(());
         }
 
+        failures.sort_unstable_by_key(|(idx, _, _)| *idx);
         let mut msg = String::from("one or more sinks failed:");
-        for (name, err) in failures {
+        for (_idx, name, err) in failures {
             msg.push('\n');
             msg.push_str("- ");
             msg.push_str(name);
@@ -447,6 +459,60 @@ mod tests {
             let err = hub.send(event).await.expect_err("expected panic failure");
             let msg = err.to_string();
             assert!(msg.contains("- panic:"), "{msg}");
+        });
+    }
+
+    #[test]
+    fn send_reports_failures_in_sink_order() {
+        #[derive(Debug)]
+        struct DelayedFailSink {
+            name: &'static str,
+            sleep: Duration,
+        }
+
+        impl Sink for DelayedFailSink {
+            fn name(&self) -> &'static str {
+                self.name
+            }
+
+            fn send<'a>(&'a self, _event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
+                Box::pin(async move {
+                    tokio::time::sleep(self.sleep).await;
+                    Err(anyhow::anyhow!("boom").into())
+                })
+            }
+        }
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build tokio runtime");
+
+        rt.block_on(async {
+            let sinks: Vec<Arc<dyn Sink>> = vec![
+                Arc::new(DelayedFailSink {
+                    name: "first",
+                    sleep: Duration::from_millis(40),
+                }),
+                Arc::new(DelayedFailSink {
+                    name: "second",
+                    sleep: Duration::from_millis(1),
+                }),
+            ];
+            let hub = Hub::new(
+                HubConfig {
+                    enabled_kinds: None,
+                    per_sink_timeout: Duration::from_secs(1),
+                },
+                sinks,
+            );
+            let event = Event::new("kind", Severity::Info, "title");
+
+            let err = hub.send(event).await.expect_err("expected sink failure");
+            let msg = err.to_string();
+            let first = msg.find("- first:").expect("contains first");
+            let second = msg.find("- second:").expect("contains second");
+            assert!(first < second, "{msg}");
         });
     }
 }

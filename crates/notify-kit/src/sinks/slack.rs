@@ -146,7 +146,7 @@ impl Sink for SlackWebhookSink {
                 }
 
                 return Err(anyhow::anyhow!(
-                    "slack webhook http error: {status}, response={summary} (response body omitted)"
+                    "slack webhook http error: {status}, response={summary}"
                 )
                 .into());
             }
@@ -156,10 +156,7 @@ impl Sink for SlackWebhookSink {
             }
 
             let summary = truncate_chars(body, 200);
-            Err(anyhow::anyhow!(
-                "slack webhook api error: response={summary} (response body omitted)"
-            )
-            .into())
+            Err(anyhow::anyhow!("slack webhook api error: response={summary}").into())
         })
     }
 }

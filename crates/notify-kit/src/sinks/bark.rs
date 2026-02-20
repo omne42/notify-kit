@@ -179,10 +179,9 @@ impl Sink for BarkSink {
                     )
                     .into());
                 }
-                return Err(anyhow::anyhow!(
-                    "bark http error: {status}, response={summary} (response body omitted)"
-                )
-                .into());
+                return Err(
+                    anyhow::anyhow!("bark http error: {status}, response={summary}").into(),
+                );
             }
 
             let content_type_is_json = resp
