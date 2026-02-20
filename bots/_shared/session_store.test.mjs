@@ -79,3 +79,41 @@ test("load compacts oversized persisted entries with maxEntries", async () => {
   assert.deepEqual(persisted.entries, [["b", "s2"], ["c", "s3"]])
   await fs.rm(dir, { recursive: true, force: true })
 })
+
+test("load treats empty persisted file as no-op", async () => {
+  const { dir, file } = await makeTempStorePath()
+  await fs.writeFile(file, "   \n", "utf-8")
+
+  const store = createSessionStore(file, { flushDebounceMs: 5 })
+
+  const originalConsoleError = console.error
+  const errors = []
+  console.error = (...args) => {
+    errors.push(args.map((v) => String(v)).join(" "))
+  }
+
+  try {
+    await store.load()
+    assert.deepEqual([...store.map.entries()], [])
+    assert.equal(errors.some((line) => line.includes("session store parse failed")), false)
+  } finally {
+    console.error = originalConsoleError
+    await store.close()
+    await fs.rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("load migrates legacy object format to current entries format", async () => {
+  const { dir, file } = await makeTempStorePath()
+  await fs.writeFile(file, `${JSON.stringify({ a: "s1", b: "s2" })}\n`, "utf-8")
+
+  const store = createSessionStore(file, { flushDebounceMs: 5 })
+  await store.load()
+  assert.deepEqual([...store.map.entries()], [["a", "s1"], ["b", "s2"]])
+  await store.close()
+
+  const persisted = JSON.parse(await fs.readFile(file, "utf-8"))
+  assert.equal(persisted.version, 1)
+  assert.deepEqual(persisted.entries, [["a", "s1"], ["b", "s2"]])
+  await fs.rm(dir, { recursive: true, force: true })
+})

@@ -54,6 +54,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/_shared/opencode`：`runEventSubscriptionLoop` 的已完成结果队列改为游标出队并按需压缩，避免 burst 场景下 `Array.shift()` 的 O(n) 复制开销。
 - `bots/_shared/opencode`：`runEventSubscriptionLoop` 的成功事件完成记录改为零分配标记（仅失败路径构造错误对象），减少高吞吐场景下的瞬时对象分配与 GC 压力。
 - `bots/_shared/session_store`：`maxEntries` 驱逐路径改为直接复用 `Map.entries().next()` 的键值对，减少一次额外 `Map.get` 查找开销。
+- `bots/_shared/session_store`：legacy object 格式加载改为逐键遍历，避免 `Object.entries(...)` 一次性复制大对象，降低启动期峰值内存占用。
 - `dingtalk` sink：`timestamp/sign` 参数清理在“无命中”场景下改为零分配快路径，避免构造阶段不必要的 query 克隆与字符串拷贝。
 - `TelegramBotSink`：发送 payload 的 JSON 对象改为按已知字段数预分配 `serde_json::Map` 容量，减少发送热路径的小对象扩容。
 - `sinks/text`：当剩余字符预算已不足以容纳分隔符与后续内容时提前短路，避免继续执行无效的字段截断计算，减少小预算场景的额外 CPU 开销。
@@ -119,6 +120,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `TelegramBotSink`：当 API 错误响应已包含 `error_code`/`description` 时，不再附带“response body omitted”的矛盾文案。
 - `sinks/text`：修复极小 `max_chars` 预算下可能输出尾部孤立换行符（如仅剩 1 个字符预算时尝试追加 body/tag）的格式错误。
 - `bots/_shared/session_store`：`atomicWriteUtf8` 在临时文件写入失败时会清理 `.tmp` 文件，避免连续写失败场景残留临时文件累积。
+- `bots/_shared/session_store`：空白/空文件现在按“无数据”处理，避免启动时重复输出 JSON 解析错误并减少无效异常路径开销。
 - `dingtalk` sink：当启用签名但原始 webhook URL 不含 `timestamp/sign` 时，不再无条件重写 query，避免原始参数编码被不必要地规范化导致的潜在兼容性问题。
 - `Hub::send`：无 sink 时即使当前不在 Tokio runtime 中也会直接成功返回（no-op），避免误报 `NoTokioRuntime`。
 - `Hub::try_notify`：无 sink 时改为直接返回 `Ok(())`，避免空配置场景下出现不必要的 `NoTokioRuntime` / `Overloaded`。

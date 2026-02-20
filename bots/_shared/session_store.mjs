@@ -18,6 +18,9 @@ async function safeReadJson(filePath, { maxBytes = 0 } = {}) {
       }
     }
     const raw = await fs.readFile(filePath, "utf-8")
+    if (raw.trim() === "") {
+      return null
+    }
     return JSON.parse(raw)
   } catch (err) {
     if (err && err.code === "ENOENT") return null
@@ -200,33 +203,47 @@ export function createSessionStore(
 
   function parsePersistedEntries(data) {
     if (!data || typeof data !== "object") {
-      return { entries: [], isCurrentFormat: true }
+      return { entries: null, legacyObject: null, isCurrentFormat: true }
     }
     if (Array.isArray(data.entries)) {
-      return { entries: data.entries, isCurrentFormat: true }
+      return { entries: data.entries, legacyObject: null, isCurrentFormat: true }
     }
     if (Array.isArray(data)) {
-      return { entries: data, isCurrentFormat: true }
+      return { entries: data, legacyObject: null, isCurrentFormat: true }
     }
-    return { entries: Object.entries(data), isCurrentFormat: false }
+    return { entries: null, legacyObject: data, isCurrentFormat: false }
   }
 
   async function load() {
     if (!storePath) return
     const data = await safeReadJson(storePath, { maxBytes: fileBytesLimit })
-    const { entries, isCurrentFormat } = parsePersistedEntries(data)
-    if (!Array.isArray(entries) || entries.length === 0) return
+    const { entries, legacyObject, isCurrentFormat } = parsePersistedEntries(data)
 
     let evictedOnLoad = false
-    for (const item of entries) {
-      if (!Array.isArray(item) || item.length !== 2) continue
-      const [k, v] = item
-      if (typeof k !== "string") continue
-      const evictedCount = setMapValue(k, v)
-      if (evictedCount > 0) {
-        evictedOnLoad = true
+    let loadedAny = false
+    if (Array.isArray(entries)) {
+      if (entries.length === 0) return
+      for (const item of entries) {
+        loadedAny = true
+        if (!Array.isArray(item) || item.length !== 2) continue
+        const [k, v] = item
+        if (typeof k !== "string") continue
+        const evictedCount = setMapValue(k, v)
+        if (evictedCount > 0) {
+          evictedOnLoad = true
+        }
+      }
+    } else if (legacyObject && typeof legacyObject === "object") {
+      for (const k in legacyObject) {
+        if (!Object.prototype.hasOwnProperty.call(legacyObject, k)) continue
+        loadedAny = true
+        const evictedCount = setMapValue(k, legacyObject[k])
+        if (evictedCount > 0) {
+          evictedOnLoad = true
+        }
       }
     }
+    if (!loadedAny) return
 
     // Compact oversized/legacy persisted data once during startup to avoid repeated heavy loads.
     if (evictedOnLoad || !isCurrentFormat) {
