@@ -47,6 +47,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 
 ### Changed
 - `bots/_shared/opencode`：`runEventSubscriptionLoop` 的 in-flight 结果等待改为“单次回调 + 已完成队列”模式，避免高吞吐场景下重复 `Promise.race(inflight)` 造成的额外 Promise 监听与 CPU/内存开销。
+- `bots/_shared/opencode`：`runEventSubscriptionLoop` 的已完成结果队列改为游标出队并按需压缩，避免 burst 场景下 `Array.shift()` 的 O(n) 复制开销。
 - `bots/_shared/session_store`：`maxEntries` 驱逐路径改为直接复用 `Map.entries().next()` 的键值对，减少一次额外 `Map.get` 查找开销。
 - `dingtalk` sink：`timestamp/sign` 参数清理在“无命中”场景下改为零分配快路径，避免构造阶段不必要的 query 克隆与字符串拷贝。
 - `sinks/text`：当剩余字符预算已不足以容纳分隔符与后续内容时提前短路，避免继续执行无效的字段截断计算，减少小预算场景的额外 CPU 开销。
@@ -102,6 +103,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Dev: `githooks/pre-commit` 新增严格门禁（`scripts/pre-commit-check.sh`），提交前执行 clippy（`-D warnings`）与生产目标关键 lint（`unwrap/expect`、`let _ =` 忽略 must_use、冗余 clone）。
 
 ### Fixed
+- `bots/_shared/opencode`：修复 `runEventSubscriptionLoop` 在“快速事件流 + handler 快速完成/失败”时，已完成结果可能在 race 落败分支被提前消费并丢弃的问题；该问题会导致错误延迟/丢失重连信号，并可能引发已完成结果队列持续增长。
 - `bots/_shared/opencode`：修复 `runEventSubscriptionLoop` 在“事件流快于 handler 完成”时重复对同一 in-flight Promise 挂接 race 监听导致的回调堆积问题，降低长期运行进程的瞬时内存增长风险。
 - `bots/_shared/opencode`：`withTimeout` 现在会将“任务函数同步抛错”统一收敛为 Promise 拒绝，修复该边界场景绕过统一超时/错误处理路径的问题。
 - `PushPlusSink`：当 API 错误响应已包含 `msg` 时，不再附带“response body omitted”的矛盾文案。

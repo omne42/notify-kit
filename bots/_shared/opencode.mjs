@@ -177,8 +177,31 @@ export async function runEventSubscriptionLoop({
       const iterator = stream[Symbol.asyncIterator]()
       const inflight = new Set()
       const settledResults = []
+      let settledHead = 0
       let settledSignal = null
-      let pendingSettledResult = null
+
+      const compactSettledResults = () => {
+        if (settledHead === 0) return
+        if (
+          settledHead === settledResults.length ||
+          settledHead >= 1024 ||
+          settledHead * 2 >= settledResults.length
+        ) {
+          settledResults.splice(0, settledHead)
+          settledHead = 0
+        }
+      }
+
+      const hasSettledResults = () => settledHead < settledResults.length
+
+      const dequeueSettledResult = () => {
+        if (!hasSettledResults()) return null
+        const result = settledResults[settledHead]
+        settledResults[settledHead] = undefined
+        settledHead += 1
+        compactSettledResults()
+        return result || null
+      }
 
       const waitForSettledSignal = () => {
         if (settledSignal) return settledSignal.promise
@@ -214,21 +237,12 @@ export async function runEventSubscriptionLoop({
         })
       }
 
-      const consumeSettledResult = async () => {
-        while (settledResults.length === 0) {
+      const waitForNextSettledResult = async () => {
+        while (!hasSettledResults()) {
           if (inflight.size === 0) return null
           await waitForSettledSignal()
         }
-        return settledResults.shift() || null
-      }
-
-      const nextSettledResult = () => {
-        if (!pendingSettledResult) {
-          pendingSettledResult = consumeSettledResult().finally(() => {
-            pendingSettledResult = null
-          })
-        }
-        return pendingSettledResult
+        return dequeueSettledResult()
       }
 
       let loopError = null
@@ -236,9 +250,18 @@ export async function runEventSubscriptionLoop({
       let pendingNext = iterator.next()
 
       while (!streamEnded || inflight.size > 0) {
+        if (hasSettledResults()) {
+          const result = dequeueSettledResult()
+          if (result && !result.ok) {
+            loopError = result.error
+            break
+          }
+          continue
+        }
+
         if (inflight.size >= maxConcurrent || streamEnded) {
           if (inflight.size === 0) break
-          const result = await nextSettledResult()
+          const result = await waitForNextSettledResult()
           if (result && !result.ok) {
             loopError = result.error
             break
@@ -262,7 +285,7 @@ export async function runEventSubscriptionLoop({
             (step) => ({ kind: "event", step }),
             (error) => ({ kind: "event_error", error }),
           ),
-          nextSettledResult().then((result) => ({ kind: "result", result })),
+          waitForSettledSignal().then(() => ({ kind: "result_ready" })),
         ])
 
         if (outcome.kind === "event_error") {
@@ -270,9 +293,10 @@ export async function runEventSubscriptionLoop({
           break
         }
 
-        if (outcome.kind === "result") {
-          if (outcome.result && !outcome.result.ok) {
-            loopError = outcome.result.error
+        if (outcome.kind === "result_ready") {
+          const result = dequeueSettledResult()
+          if (result && !result.ok) {
+            loopError = result.error
             break
           }
           continue

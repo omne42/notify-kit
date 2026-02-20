@@ -77,6 +77,52 @@ void runEventSubscriptionLoop({
   assert.ok(subscribeCalls >= 2, `expected loop retry, got subscribeCalls=${subscribeCalls}`)
 })
 
+test("runEventSubscriptionLoop retries when fast stream and fast handler failure race", async () => {
+  const script = `
+import { runEventSubscriptionLoop } from ${JSON.stringify(opencodeModuleUrl)}
+
+let subscribeCalls = 0
+console.error = () => {}
+
+setTimeout(() => {
+  console.log("SUBSCRIBE_CALLS=" + String(subscribeCalls))
+  process.exit(0)
+}, 450)
+
+void runEventSubscriptionLoop({
+  label: "test-loop-fast-fail",
+  minBackoffMs: 10,
+  maxBackoffMs: 10,
+  jitterMs: 0,
+  maxConcurrentOnEvent: 4,
+  subscribe: async () => {
+    subscribeCalls += 1
+    return {
+      stream: (async function* () {
+        let i = 0
+        while (i < 1000000) {
+          yield { id: i }
+          i += 1
+        }
+      })(),
+    }
+  },
+  onEvent: async () => {
+    throw new Error("boom")
+  },
+})
+`
+
+  const { code, stdout, stderr } = await runNodeScript(script)
+  assert.equal(code, 0, `child exited with non-zero code, stderr=${stderr}`)
+
+  const match = stdout.match(/SUBSCRIBE_CALLS=(\d+)/)
+  assert.ok(match, `missing subscribe count output, stdout=${stdout}`)
+  const subscribeCalls = Number.parseInt(match[1], 10)
+  assert.ok(Number.isFinite(subscribeCalls), `invalid subscribe count, stdout=${stdout}`)
+  assert.ok(subscribeCalls >= 2, `expected loop retry, got subscribeCalls=${subscribeCalls}`)
+})
+
 test("runEventSubscriptionLoop does not leak pending next() rejection on handler failure", async () => {
   const script = `
 import { runEventSubscriptionLoop } from ${JSON.stringify(opencodeModuleUrl)}
