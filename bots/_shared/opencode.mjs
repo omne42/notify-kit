@@ -107,7 +107,9 @@ export async function withTimeout(taskOrPromise, label, timeoutMs = getOpencodeT
   const supportsAbort = typeof taskOrPromise === "function"
   const controller =
     supportsAbort && typeof AbortController !== "undefined" ? new AbortController() : null
-  const taskPromise = supportsAbort ? taskOrPromise(controller?.signal) : taskOrPromise
+  const taskPromise = supportsAbort
+    ? Promise.resolve().then(() => taskOrPromise(controller?.signal))
+    : Promise.resolve(taskOrPromise)
 
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
     return taskPromise

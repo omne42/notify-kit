@@ -46,6 +46,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- `bots/_shared/session_store`：`maxEntries` 驱逐路径改为直接复用 `Map.entries().next()` 的键值对，减少一次额外 `Map.get` 查找开销。
 - `dingtalk` sink：`timestamp/sign` 参数清理在“无命中”场景下改为零分配快路径，避免构造阶段不必要的 query 克隆与字符串拷贝。
 - `sinks/text`：当剩余字符预算已不足以容纳分隔符与后续内容时提前短路，避免继续执行无效的字段截断计算，减少小预算场景的额外 CPU 开销。
 - `sinks/text`：为 ASCII 文本截断与拼接补充快路径，减少常见英文消息在 `truncate_chars`/`push_str` 热路径上的逐字符扫描开销。
@@ -100,6 +101,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Dev: `githooks/pre-commit` 新增严格门禁（`scripts/pre-commit-check.sh`），提交前执行 clippy（`-D warnings`）与生产目标关键 lint（`unwrap/expect`、`let _ =` 忽略 must_use、冗余 clone）。
 
 ### Fixed
+- `bots/_shared/opencode`：`withTimeout` 现在会将“任务函数同步抛错”统一收敛为 Promise 拒绝，修复该边界场景绕过统一超时/错误处理路径的问题。
 - `PushPlusSink`：当 API 错误响应已包含 `msg` 时，不再附带“response body omitted”的矛盾文案。
 - `sinks/text`：修复极小 `max_chars` 预算下可能输出尾部孤立换行符（如仅剩 1 个字符预算时尝试追加 body/tag）的格式错误。
 - `bots/_shared/session_store`：`atomicWriteUtf8` 在临时文件写入失败时会清理 `.tmp` 文件，避免连续写失败场景残留临时文件累积。

@@ -265,9 +265,9 @@ export function createSessionStore(
     if (entryLimit <= 0) return 0
     let evictedCount = 0
     while (map.size > entryLimit) {
-      const oldest = map.keys().next().value
-      if (oldest === undefined) break
-      const oldestValue = map.get(oldest)
+      const oldestEntry = map.entries().next().value
+      if (!oldestEntry) break
+      const [oldest, oldestValue] = oldestEntry
       map.delete(oldest)
       if (evictedOut) {
         evictedOut.push([oldest, oldestValue])

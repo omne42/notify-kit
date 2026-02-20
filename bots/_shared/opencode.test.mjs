@@ -4,7 +4,7 @@ import path from "node:path"
 import { test } from "node:test"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
-import { buildResponseText } from "./opencode.mjs"
+import { buildResponseText, withTimeout } from "./opencode.mjs"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const opencodeModuleUrl = pathToFileURL(path.join(here, "opencode.mjs")).href
@@ -177,4 +177,14 @@ test("buildResponseText falls back when no text is available", () => {
     parts: [{ type: "tool", text: "ignored" }],
   })
   assert.equal(out, "I received your message but didn't have a response.")
+})
+
+test("withTimeout handles synchronous task throws as rejected promises", async () => {
+  await assert.rejects(
+    () =>
+      withTimeout(() => {
+        throw new Error("sync-boom")
+      }, "sync-task", 100),
+    /sync-boom/,
+  )
 })
