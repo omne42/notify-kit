@@ -4,6 +4,8 @@ import path from "node:path"
 import { test } from "node:test"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
+import { buildResponseText } from "./opencode.mjs"
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 const opencodeModuleUrl = pathToFileURL(path.join(here, "opencode.mjs")).href
 
@@ -139,4 +141,40 @@ void runEventSubscriptionLoop({
   const unhandled = Number.parseInt(unhandledMatch[1], 10)
   assert.ok(Number.isFinite(unhandled), `invalid unhandled count, stdout=${stdout}`)
   assert.equal(unhandled, 0, `expected no unhandled rejections, stdout=${stdout}`)
+})
+
+test("buildResponseText prefers info content", () => {
+  const out = buildResponseText({
+    info: { content: "from-info" },
+    parts: [{ type: "text", text: "from-part" }],
+  })
+  assert.equal(out, "from-info")
+})
+
+test("buildResponseText joins text parts with newline", () => {
+  const out = buildResponseText({
+    parts: [
+      { type: "tool", text: "ignored" },
+      { type: "text", text: "line-1" },
+      { type: "text", text: "line-2" },
+    ],
+  })
+  assert.equal(out, "line-1\nline-2")
+})
+
+test("buildResponseText keeps join semantics for empty text segments", () => {
+  const out = buildResponseText({
+    parts: [
+      { type: "text" },
+      { type: "text", text: "line-2" },
+    ],
+  })
+  assert.equal(out, "\nline-2")
+})
+
+test("buildResponseText falls back when no text is available", () => {
+  const out = buildResponseText({
+    parts: [{ type: "tool", text: "ignored" }],
+  })
+  assert.equal(out, "I received your message but didn't have a response.")
 })

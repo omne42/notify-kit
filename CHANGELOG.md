@@ -46,6 +46,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- `bots/_shared/opencode`：`buildResponseText` 改为单次遍历拼接文本，减少 `filter/map/join` 中间数组分配，降低高频消息路径的瞬时内存开销。
+- `Hub`：sink 失败聚合仅在失败数大于 1 时排序，减少单失败场景的无效排序开销。
 - `sinks/text`：在文本拼接达到 `max_chars`（含 `0`）后立即短路返回，避免继续遍历 body/tags，降低小预算截断场景的额外 CPU 开销。
 - Webhook/API sinks: `pinned client` 写缓存路径移除同 key 的冗余二次命中检查（构建锁已保证互斥），减少热路径写锁持有时长与一次额外 map 读取。
 - `Webhook/API sinks`：`build_http_client_pinned_async` 改为直接借用 URL host（`&str`），减少 pinned client 构建路径的一次临时 `String` 分配。
@@ -92,6 +94,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Dev: `githooks/pre-commit` 新增严格门禁（`scripts/pre-commit-check.sh`），提交前执行 clippy（`-D warnings`）与生产目标关键 lint（`unwrap/expect`、`let _ =` 忽略 must_use、冗余 clone）。
 
 ### Fixed
+- `bots/_shared/session_store`：`atomicWriteUtf8` 在临时文件写入失败时会清理 `.tmp` 文件，避免连续写失败场景残留临时文件累积。
 - `dingtalk` sink：当启用签名但原始 webhook URL 不含 `timestamp/sign` 时，不再无条件重写 query，避免原始参数编码被不必要地规范化导致的潜在兼容性问题。
 - `Hub::send`：无 sink 时即使当前不在 Tokio runtime 中也会直接成功返回（no-op），避免误报 `NoTokioRuntime`。
 - `Hub::try_notify`：无 sink 时改为直接返回 `Ok(())`，避免空配置场景下出现不必要的 `NoTokioRuntime` / `Overloaded`。

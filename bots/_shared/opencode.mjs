@@ -9,14 +9,26 @@ export function assertEnv(name, { optional = false } = {}) {
 }
 
 export function buildResponseText(response) {
-  return (
-    response?.info?.content ||
-    response?.parts
-      ?.filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n") ||
-    "I received your message but didn't have a response."
-  )
+  if (response?.info?.content) {
+    return response.info.content
+  }
+
+  const parts = response?.parts
+  if (Array.isArray(parts)) {
+    let seenTextParts = 0
+    let joined = ""
+    for (const part of parts) {
+      if (part?.type !== "text") continue
+      if (seenTextParts > 0) joined += "\n"
+      if (part.text !== undefined && part.text !== null) {
+        joined += String(part.text)
+      }
+      seenTextParts += 1
+    }
+    if (joined) return joined
+  }
+
+  return "I received your message but didn't have a response."
 }
 
 export function getCompletedToolUpdate(part) {

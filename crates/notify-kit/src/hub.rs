@@ -259,7 +259,9 @@ impl HubInner {
             return Ok(());
         }
 
-        failures.sort_unstable_by_key(|(idx, _, _)| *idx);
+        if failures.len() > 1 {
+            failures.sort_unstable_by_key(|(idx, _, _)| *idx);
+        }
         let mut msg = String::with_capacity(24 + failures.len().saturating_mul(64));
         msg.push_str("one or more sinks failed:");
         for (_idx, name, err) in failures {

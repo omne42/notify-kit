@@ -43,7 +43,12 @@ async function atomicWriteUtf8(filePath, content, { root = null, rootReal = null
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`
   const tmp = `${filePath}.${process.pid}.${entropy}.tmp`
-  await fs.writeFile(tmp, content, "utf-8")
+  try {
+    await fs.writeFile(tmp, content, "utf-8")
+  } catch (err) {
+    await ignoreError(fs.unlink(tmp), "session store unlink failed")
+    throw err
+  }
   try {
     await fs.rename(tmp, filePath)
   } catch (err) {
