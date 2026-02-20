@@ -45,6 +45,9 @@ fn byte_index_after_n_chars(input: &str, max_chars: usize) -> usize {
     if max_chars == 0 {
         return 0;
     }
+    if input.is_ascii() {
+        return input.len().min(max_chars);
+    }
     let mut count = 0usize;
     for (idx, ch) in input.char_indices() {
         count += 1;
@@ -58,6 +61,10 @@ fn byte_index_after_n_chars(input: &str, max_chars: usize) -> usize {
 fn take_prefix_chars(input: &str, max_chars: usize) -> (&str, usize, bool) {
     if max_chars == 0 {
         return ("", 0, !input.is_empty());
+    }
+    if input.is_ascii() {
+        let end = input.len().min(max_chars);
+        return (&input[..end], end, input.len() > max_chars);
     }
     let mut count = 0usize;
     for (idx, _) in input.char_indices() {
@@ -186,6 +193,19 @@ fn truncate_chars_cow(input: &str, max_chars: usize) -> Cow<'_, str> {
     if max_chars == 0 {
         return Cow::Borrowed("");
     }
+    if input.is_ascii() {
+        if input.len() <= max_chars {
+            return Cow::Borrowed(input);
+        }
+        if max_chars > 3 {
+            let keep = max_chars - 3;
+            let mut out = String::with_capacity(max_chars);
+            out.push_str(&input[..keep]);
+            out.push_str("...");
+            return Cow::Owned(out);
+        }
+        return Cow::Borrowed(&input[..max_chars]);
+    }
 
     let keep_chars_for_ellipsis = max_chars.saturating_sub(3);
     let mut seen = 0usize;
@@ -252,6 +272,13 @@ mod tests {
         let input = "abcdef";
         let out = truncate_chars(input, 5);
         assert_eq!(out, "ab...");
+    }
+
+    #[test]
+    fn truncate_chars_ascii_small_budget_has_no_ellipsis() {
+        let input = "abcdef";
+        let out = truncate_chars(input, 3);
+        assert_eq!(out, "abc");
     }
 
     #[test]

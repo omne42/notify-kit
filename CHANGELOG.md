@@ -46,6 +46,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- `sinks/text`：为 ASCII 文本截断与拼接补充快路径，减少常见英文消息在 `truncate_chars`/`push_str` 热路径上的逐字符扫描开销。
 - `Hub`：`send()` 热路径改为直接借用内部状态，移除一次冗余 `Arc` clone，减少高频发送场景的原子引用计数开销。
 - `dingtalk` sink：`timestamp/sign` query 清理改为单次扫描 URL 查询参数，减少构造阶段的重复解析开销。
 - `BarkSink` / `PushPlusSink` / `FeishuWebhookSink`：JSON payload 构造改为按已知字段数预分配 `serde_json::Map` 容量，减少发送热路径的小对象扩容。
