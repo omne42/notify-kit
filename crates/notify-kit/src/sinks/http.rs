@@ -387,21 +387,9 @@ pub(crate) async fn select_http_client(
         } else {
             let client = build_http_client_pinned_async(timeout, url).await?;
             let now = Instant::now();
-            let mut cache = pinned_client_cache().write().await;
-            cache.retain(|_, v| v.expires_at > now);
-
-            let refreshed = cache.get(&key).and_then(|cached| {
-                if cached.expires_at > now {
-                    Some(cached.client.clone())
-                } else {
-                    None
-                }
-            });
-
-            if let Some(cached) = refreshed {
-                drop(cache);
-                Ok(cached)
-            } else {
+            {
+                let mut cache = pinned_client_cache().write().await;
+                cache.retain(|_, v| v.expires_at > now);
                 cache.insert(
                     key.clone(),
                     CachedPinnedClient {
@@ -414,9 +402,8 @@ pub(crate) async fn select_http_client(
                     DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES,
                     &key,
                 );
-                drop(cache);
-                Ok(client)
             }
+            Ok(client)
         }
     }
     .await;

@@ -46,6 +46,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- `sinks/text`：在文本拼接达到 `max_chars`（含 `0`）后立即短路返回，避免继续遍历 body/tags，降低小预算截断场景的额外 CPU 开销。
+- Webhook/API sinks: `pinned client` 写缓存路径移除同 key 的冗余二次命中检查（构建锁已保证互斥），减少热路径写锁持有时长与一次额外 map 读取。
 - `Webhook/API sinks`：`build_http_client_pinned_async` 改为直接借用 URL host（`&str`），减少 pinned client 构建路径的一次临时 `String` 分配。
 - `dingtalk` sink：仅在确实存在 `timestamp/sign` 参数时才重写 webhook query，减少构造阶段的无效扫描与重编码开销。
 - `Hub::notify` / `Hub::send`：在无 sink 场景提前返回，避免不必要的 Tokio runtime 探测与 semaphore 开销。

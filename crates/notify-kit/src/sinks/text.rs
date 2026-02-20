@@ -83,6 +83,10 @@ impl LimitedChars {
         self.out.is_empty()
     }
 
+    fn is_full(&self) -> bool {
+        self.truncated || self.max == 0 || self.out_chars >= self.max
+    }
+
     fn push_char(&mut self, ch: char) {
         if self.truncated || self.max == 0 {
             return;
@@ -127,10 +131,16 @@ fn format_event_text_parts_limited(
     include_title: bool,
 ) -> String {
     let mut out = LimitedChars::new(limits.max_chars);
+    if out.is_full() {
+        return out.finish();
+    }
 
     if include_title {
         let title = truncate_chars_cow(&event.title, limits.max_title_chars);
         out.push_str(title.as_ref());
+        if out.is_full() {
+            return out.finish();
+        }
     }
 
     if let Some(body) = event.body.as_deref() {
@@ -141,11 +151,14 @@ fn format_event_text_parts_limited(
             }
             let body = truncate_chars_cow(body, limits.max_body_chars);
             out.push_str(body.as_ref());
+            if out.is_full() {
+                return out.finish();
+            }
         }
     }
 
     for (idx, (k, v)) in event.tags.iter().enumerate() {
-        if idx >= limits.max_tags {
+        if idx >= limits.max_tags || out.is_full() {
             break;
         }
         if !out.is_empty() {
@@ -264,5 +277,39 @@ mod tests {
         let out = format_event_text_limited(&event, limits);
         assert!(out.chars().count() <= 20, "{out}");
         assert!(out.contains("title"), "{out}");
+    }
+
+    #[test]
+    fn format_event_text_limited_keeps_title_only_when_already_full() {
+        let event = Event::new("k", Severity::Info, "hello world")
+            .with_body("body")
+            .with_tag("k", "v");
+
+        let out = format_event_text_limited(
+            &event,
+            TextLimits {
+                max_chars: 8,
+                ..TextLimits::default()
+            },
+        );
+        assert_eq!(out, "hello...");
+        assert!(!out.contains('\n'), "{out}");
+        assert!(!out.contains("body"), "{out}");
+        assert!(!out.contains("k=v"), "{out}");
+    }
+
+    #[test]
+    fn format_event_text_limited_zero_char_budget_returns_empty() {
+        let event = Event::new("k", Severity::Info, "title")
+            .with_body("body")
+            .with_tag("k", "v");
+        let out = format_event_text_limited(
+            &event,
+            TextLimits {
+                max_chars: 0,
+                ..TextLimits::default()
+            },
+        );
+        assert!(out.is_empty(), "{out}");
     }
 }
