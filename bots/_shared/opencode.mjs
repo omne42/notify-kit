@@ -103,6 +103,13 @@ function getEventHandlerConcurrency() {
   return Number.isFinite(value) && value > 0 ? value : 4
 }
 
+function normalizeLoopError(err, fallbackMessage) {
+  if (err instanceof Error) return err
+  if (typeof err === "string" && err.trim() !== "") return new Error(err)
+  if (err === null || err === undefined) return new Error(fallbackMessage)
+  return new Error(String(err))
+}
+
 export async function withTimeout(taskOrPromise, label, timeoutMs = getOpencodeTimeoutMs()) {
   const supportsAbort = typeof taskOrPromise === "function"
   const controller =
@@ -225,10 +232,11 @@ export async function runEventSubscriptionLoop({
           `${label} onEvent`,
           eventTimeoutMs,
         )
-        const tracked = task.then(
-          () => ({ ok: true }),
-          (error) => ({ ok: false, error }),
-        )
+        const tracked = task
+          .then(() => null)
+          .catch((error) => ({
+            error: normalizeLoopError(error, `${label} onEvent failed`),
+          }))
         inflight.add(tracked)
         tracked.then((result) => {
           inflight.delete(tracked)
@@ -252,7 +260,7 @@ export async function runEventSubscriptionLoop({
       while (!streamEnded || inflight.size > 0) {
         if (hasSettledResults()) {
           const result = dequeueSettledResult()
-          if (result && !result.ok) {
+          if (result?.error) {
             loopError = result.error
             break
           }
@@ -262,7 +270,7 @@ export async function runEventSubscriptionLoop({
         if (inflight.size >= maxConcurrent || streamEnded) {
           if (inflight.size === 0) break
           const result = await waitForNextSettledResult()
-          if (result && !result.ok) {
+          if (result?.error) {
             loopError = result.error
             break
           }
@@ -289,13 +297,13 @@ export async function runEventSubscriptionLoop({
         ])
 
         if (outcome.kind === "event_error") {
-          loopError = outcome.error
+          loopError = normalizeLoopError(outcome.error, `${label} stream read failed`)
           break
         }
 
         if (outcome.kind === "result_ready") {
           const result = dequeueSettledResult()
-          if (result && !result.ok) {
+          if (result?.error) {
             loopError = result.error
             break
           }

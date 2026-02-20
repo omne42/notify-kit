@@ -240,6 +240,66 @@ void runEventSubscriptionLoop({
   assert.equal(setRaceCalls, 0, `expected no Promise.race(Set), stdout=${stdout}`)
 })
 
+test("runEventSubscriptionLoop closes iterator when handler rejects with falsy value", async () => {
+  const script = `
+import { runEventSubscriptionLoop } from ${JSON.stringify(opencodeModuleUrl)}
+
+let subscribeCalls = 0
+let returnCalls = 0
+console.error = () => {}
+
+setTimeout(() => {
+  console.log("SUBSCRIBE_CALLS=" + String(subscribeCalls))
+  console.log("RETURN_CALLS=" + String(returnCalls))
+  process.exit(0)
+}, 450)
+
+void runEventSubscriptionLoop({
+  label: "test-loop-falsy-reject",
+  minBackoffMs: 10,
+  maxBackoffMs: 10,
+  jitterMs: 0,
+  maxConcurrentOnEvent: 2,
+  subscribe: async () => {
+    subscribeCalls += 1
+    let step = 0
+    return {
+      stream: {
+        [Symbol.asyncIterator]() {
+          return this
+        },
+        next() {
+          step += 1
+          if (step === 1) return Promise.resolve({ done: false, value: { id: 1 } })
+          return new Promise(() => {})
+        },
+        return() {
+          returnCalls += 1
+          return Promise.resolve({ done: true, value: undefined })
+        },
+      },
+    }
+  },
+  onEvent: async () => Promise.reject(),
+})
+`
+
+  const { code, stdout, stderr } = await runNodeScript(script)
+  assert.equal(code, 0, `child exited with non-zero code, stderr=${stderr}`)
+
+  const subscribeMatch = stdout.match(/SUBSCRIBE_CALLS=(\d+)/)
+  assert.ok(subscribeMatch, `missing subscribe count output, stdout=${stdout}`)
+  const subscribeCalls = Number.parseInt(subscribeMatch[1], 10)
+  assert.ok(Number.isFinite(subscribeCalls), `invalid subscribe count, stdout=${stdout}`)
+  assert.ok(subscribeCalls >= 2, `expected loop retry, got subscribeCalls=${subscribeCalls}`)
+
+  const returnMatch = stdout.match(/RETURN_CALLS=(\d+)/)
+  assert.ok(returnMatch, `missing return count output, stdout=${stdout}`)
+  const returnCalls = Number.parseInt(returnMatch[1], 10)
+  assert.ok(Number.isFinite(returnCalls), `invalid return count, stdout=${stdout}`)
+  assert.ok(returnCalls >= 1, `expected iterator.return to be called, stdout=${stdout}`)
+})
+
 test("buildResponseText prefers info content", () => {
   const out = buildResponseText({
     info: { content: "from-info" },
