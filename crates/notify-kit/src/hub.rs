@@ -184,6 +184,8 @@ impl Hub {
 
 impl HubInner {
     async fn send(self: Arc<Self>, event: Arc<Event>) -> crate::Result<()> {
+        const UNKNOWN_SINK_NAME: &str = "<unknown>";
+
         if self.sinks.is_empty() {
             return Ok(());
         }
@@ -195,20 +197,24 @@ impl HubInner {
         let mut sink_iter = self.sinks.iter().cloned().enumerate();
 
         let make_send_future = |idx: usize, sink: Arc<dyn Sink>, event: Arc<Event>| async move {
-            let name = sink.name();
-            let result = AssertUnwindSafe(async move {
-                match tokio::time::timeout(timeout, sink.send(&event)).await {
-                    Ok(inner) => inner,
-                    Err(_) => Err(anyhow::anyhow!("timeout after {timeout:?}").into()),
+            let name = match std::panic::catch_unwind(AssertUnwindSafe(|| sink.name())) {
+                Ok(name) => name,
+                Err(_) => {
+                    return (
+                        idx,
+                        UNKNOWN_SINK_NAME,
+                        Err(anyhow::anyhow!("sink panicked").into()),
+                    );
                 }
+            };
+            let result = AssertUnwindSafe(async move {
+                tokio::time::timeout(timeout, sink.send(&event))
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("timeout after {timeout:?}").into()))
             })
             .catch_unwind()
-            .await;
-
-            let result = match result {
-                Ok(inner) => inner,
-                Err(_) => Err(anyhow::anyhow!("sink panicked").into()),
-            };
+            .await
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("sink panicked").into()));
             (idx, name, result)
         };
 
@@ -271,11 +277,15 @@ mod tests {
         Ok,
         Err,
         Sleep(Duration),
+        PanicName,
         Panic,
     }
 
     impl Sink for TestSink {
         fn name(&self) -> &'static str {
+            if matches!(self.behavior, TestSinkBehavior::PanicName) {
+                panic!("name boom");
+            }
             self.name
         }
 
@@ -288,6 +298,7 @@ mod tests {
                         tokio::time::sleep(d).await;
                         Ok(())
                     }
+                    TestSinkBehavior::PanicName => Ok(()),
                     TestSinkBehavior::Panic => panic!("boom"),
                 }
             })
@@ -461,6 +472,34 @@ mod tests {
             let err = hub.send(event).await.expect_err("expected panic failure");
             let msg = err.to_string();
             assert!(msg.contains("- panic:"), "{msg}");
+        });
+    }
+
+    #[test]
+    fn send_handles_sink_name_panic() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build tokio runtime");
+
+        rt.block_on(async {
+            let sinks: Vec<Arc<dyn Sink>> = vec![Arc::new(TestSink {
+                name: "ignored",
+                behavior: TestSinkBehavior::PanicName,
+            })];
+
+            let hub = Hub::new(
+                HubConfig {
+                    enabled_kinds: None,
+                    per_sink_timeout: Duration::from_secs(1),
+                },
+                sinks,
+            );
+            let event = Event::new("kind", Severity::Info, "title");
+
+            let err = hub.send(event).await.expect_err("expected panic failure");
+            let msg = err.to_string();
+            assert!(msg.contains("- <unknown>: sink panicked"), "{msg}");
         });
     }
 

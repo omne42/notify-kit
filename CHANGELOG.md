@@ -53,6 +53,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `HubConfig`：默认 `per_sink_timeout` 从 `2s` 调整为 `5s`，避免 HTTP sinks 默认超时与 DNS 预检叠加导致的误超时。
 - `Hub`：`notify/try_notify` 日志路径不再为 `Event.kind` 进行多余的 `String` 克隆；过载丢弃路径也避免提前分配 `Arc<Event>`。
 - `Hub`：聚合 sink 错误消息时改为直接写入 `String`（减少临时 `format!` 分配）。
+- `Hub`：sink 执行结果归一化改为单路径表达式（timeout/panic），减少发送热路径中的分支与临时匹配开销。
 - `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
 - All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
@@ -89,6 +90,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `serverchan` sink：错误信息不再回显第三方返回的 message（保持低敏感）。
 - `Hub`：sink task panic 时错误聚合现在会保留 sink 名称（便于定位）。
 - `Hub`：聚合 sink 结果时不再为 sink 名称分配 `String`（减少堆分配）。
+- `Hub`：`Sink::name()` panic 现在会被捕获并聚合为 `<unknown>: sink panicked`，避免单个 sink 触发整个发送流程 panic。
 - Webhook/API sinks: 修复 `enforce_public_ip` 打开时未实际使用 pinned client 的问题。
 - Webhook/API sinks: 公网 IP 判定现在会正确处理 IPv4-mapped IPv6（例如 `::ffff:127.0.0.1`），避免绕过 SSRF 防护。
 - Webhook/API sinks: 公网 IP 判定现在会识别 NAT64 well-known prefix `64:ff9b::/96`，按嵌入的 IPv4 再判定（兼容 DNS64 且避免绕过 SSRF 防护）。
