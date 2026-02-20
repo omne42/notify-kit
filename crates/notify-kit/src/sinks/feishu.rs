@@ -284,7 +284,7 @@ impl Sink for FeishuWebhookSink {
                 Self::build_payload(event, self.max_chars, timestamp.as_deref(), sign.as_deref());
 
             let resp = send_reqwest(
-                client.post(self.webhook_url.clone()).json(&payload),
+                client.post(self.webhook_url.as_str()).json(&payload),
                 "feishu webhook",
             )
             .await?;

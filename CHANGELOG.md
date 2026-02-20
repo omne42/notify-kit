@@ -49,6 +49,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `Hub::notify` / `Hub::send`：在无 sink 场景提前返回，避免不必要的 Tokio runtime 探测与 semaphore 开销。
 - Webhook/API sinks: `pinned client` 缓存淘汰候选改为单次 key 克隆，降低缓存接近上限时的额外分配。
 - Webhook/API sinks: DNS 并发门控改为借用式 `SemaphorePermit`，减少每次 DNS 预检的 `Arc` 引用计数开销。
+- Webhook/API sinks: 发送请求时改为借用 `Url` 字符串（`as_str()`），减少热路径的 `Url` 克隆开销。
 - `dingtalk` sink：签名 URL 的 `timestamp/sign` 参数清理前移到构造阶段，发送热路径不再重复扫描并重建 query 参数。
 - `sinks/text`：`truncate_chars` 的省略号截断改为单次字符扫描，减少长文本截断时的重复遍历开销。
 - `Hub`：无 sink 时增加快速返回；失败聚合路径预分配 `Vec`/`String`，减少常见错误路径的动态分配。
@@ -134,6 +135,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: DNS 公网 IP 校验增加超时与并发限制，避免阻塞/线程池耗尽，并对 pinned client 做短 TTL 缓存以减少重复解析。
 - Webhook/API sinks: DNS 公网 IP 校验：timeout 后将 permit 生命周期绑定到实际解析任务（防止持续 timeout 时产生无界 blocking 任务/线程），并在 timeout 路径上清理 inflight 条目避免 map 增长，同时为失败/超时结果增加短 TTL 负缓存。
 - Webhook/API sinks: `pinned client` 构建锁在失败路径下会及时移除对应 `Weak` 条目，避免失败 host 累积导致静态锁表增长。
+- Webhook/API sinks: `pinned client` 构建锁在任务取消路径也会及时清理，避免取消请求导致静态锁表残留增长。
 - Webhook/API sinks: `pinned client` 缓存键改为使用完整 `Duration`，修复亚毫秒超时被毫秒截断后发生错误 client 复用的问题。
 - `SlackWebhookSink` / `DiscordWebhookSink` / `GenericWebhookSink` / `BarkSink`：读取响应 body 失败时仍保留 HTTP status 错误上下文。
 - `GitHubCommentSink` / `TelegramBotSink` / `DingTalkWebhookSink` / `WeComWebhookSink` / `FeishuWebhookSink` / `ServerChanSink` / `PushPlusSink`：非 2xx 时会读取并截断响应 body 后再返回错误，避免错误路径因未消费响应体导致连接复用下降，并提升定位信息。

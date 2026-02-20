@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use tokio::sync::{Mutex as TokioMutex, RwLock, Semaphore};
 
 pub(crate) const DEFAULT_MAX_RESPONSE_BODY_BYTES: usize = 16 * 1024;
 const RESPONSE_BODY_DRAIN_LIMIT_BYTES: usize = 64 * 1024;
@@ -27,7 +27,7 @@ struct CachedPinnedClient {
 
 static PINNED_CLIENT_CACHE: OnceLock<RwLock<HashMap<PinnedClientKey, CachedPinnedClient>>> =
     OnceLock::new();
-static PINNED_CLIENT_BUILD_LOCKS: OnceLock<Mutex<HashMap<PinnedClientKey, Weak<Mutex<()>>>>> =
+static PINNED_CLIENT_BUILD_LOCKS: OnceLock<Mutex<HashMap<PinnedClientKey, Weak<TokioMutex<()>>>>> =
     OnceLock::new();
 static DNS_LOOKUP_SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
@@ -39,8 +39,45 @@ fn pinned_client_cache() -> &'static RwLock<HashMap<PinnedClientKey, CachedPinne
     PINNED_CLIENT_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-fn pinned_client_build_locks() -> &'static Mutex<HashMap<PinnedClientKey, Weak<Mutex<()>>>> {
+fn pinned_client_build_locks() -> &'static Mutex<HashMap<PinnedClientKey, Weak<TokioMutex<()>>>> {
     PINNED_CLIENT_BUILD_LOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn lock_pinned_client_build_locks()
+-> std::sync::MutexGuard<'static, HashMap<PinnedClientKey, Weak<TokioMutex<()>>>> {
+    pinned_client_build_locks()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn cleanup_pinned_client_build_lock_entry(key: &PinnedClientKey) {
+    let mut locks = lock_pinned_client_build_locks();
+    if locks.get(key).is_some_and(|weak| weak.strong_count() == 0) {
+        locks.remove(key);
+    }
+}
+
+struct PinnedClientBuildLockCleanupGuard {
+    key: PinnedClientKey,
+    armed: bool,
+}
+
+impl PinnedClientBuildLockCleanupGuard {
+    fn new(key: PinnedClientKey) -> Self {
+        Self { key, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PinnedClientBuildLockCleanupGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            cleanup_pinned_client_build_lock_entry(&self.key);
+        }
+    }
 }
 
 fn dns_lookup_semaphore() -> &'static Arc<Semaphore> {
@@ -311,6 +348,7 @@ pub(crate) async fn select_http_client(
         host: host.to_string(),
         timeout,
     };
+    let mut build_lock_cleanup = PinnedClientBuildLockCleanupGuard::new(key.clone());
 
     let lookup_now = Instant::now();
     {
@@ -323,12 +361,12 @@ pub(crate) async fn select_http_client(
     }
 
     let key_lock = {
-        let mut locks = pinned_client_build_locks().lock().await;
+        let mut locks = lock_pinned_client_build_locks();
         locks.retain(|_, lock| lock.strong_count() > 0);
         if let Some(existing) = locks.get(&key).and_then(Weak::upgrade) {
             existing
         } else {
-            let new_lock = Arc::new(Mutex::new(()));
+            let new_lock = Arc::new(TokioMutex::new(()));
             locks.insert(key.clone(), Arc::downgrade(&new_lock));
             new_lock
         }
@@ -387,12 +425,8 @@ pub(crate) async fn select_http_client(
     .await;
 
     drop(key_lock);
-    {
-        let mut locks = pinned_client_build_locks().lock().await;
-        if locks.get(&key).is_some_and(|weak| weak.strong_count() == 0) {
-            locks.remove(&key);
-        }
-    }
+    cleanup_pinned_client_build_lock_entry(&key);
+    build_lock_cleanup.disarm();
 
     result
 }
@@ -849,7 +883,7 @@ mod tests {
                 cache.remove(&key);
             }
             {
-                let mut locks = pinned_client_build_locks().lock().await;
+                let mut locks = lock_pinned_client_build_locks();
                 locks.remove(&key);
             }
 
@@ -859,10 +893,73 @@ mod tests {
                 .expect_err("expected dns timeout error");
             assert!(err.to_string().contains("dns lookup timeout"), "{err:#}");
 
-            let locks = pinned_client_build_locks().lock().await;
+            let locks = lock_pinned_client_build_locks();
             assert!(
                 !locks.contains_key(&key),
                 "build lock entry should be removed after failed request"
+            );
+        });
+    }
+
+    #[test]
+    fn select_http_client_cleans_build_lock_on_cancel() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime");
+
+        rt.block_on(async {
+            let timeout = Duration::from_secs(1);
+            let url =
+                reqwest::Url::parse("https://lock-cancel.invalid/webhook").expect("parse url");
+            let key = PinnedClientKey {
+                host: "lock-cancel.invalid".to_string(),
+                timeout,
+            };
+
+            {
+                let mut cache = pinned_client_cache().write().await;
+                cache.remove(&key);
+            }
+            {
+                let mut locks = lock_pinned_client_build_locks();
+                locks.remove(&key);
+            }
+
+            let semaphore_permits = dns_lookup_semaphore()
+                .clone()
+                .acquire_many_owned(DEFAULT_MAX_DNS_LOOKUPS_INFLIGHT as u32)
+                .await
+                .expect("acquire dns semaphore permits");
+
+            let client = build_http_client(timeout).expect("build client");
+            let task = tokio::spawn({
+                let client = client.clone();
+                let url = url.clone();
+                async move {
+                    let _ = select_http_client(&client, timeout, &url, true).await;
+                }
+            });
+
+            let mut inserted = false;
+            for _ in 0..100 {
+                if lock_pinned_client_build_locks().contains_key(&key) {
+                    inserted = true;
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            assert!(inserted, "expected build lock entry before cancellation");
+
+            task.abort();
+            let _ = task.await;
+            drop(semaphore_permits);
+            tokio::task::yield_now().await;
+
+            let locks = lock_pinned_client_build_locks();
+            assert!(
+                !locks.contains_key(&key),
+                "build lock entry should be removed after cancelled request"
             );
         });
     }

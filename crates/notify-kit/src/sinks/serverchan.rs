@@ -205,7 +205,7 @@ impl Sink for ServerChanSink {
             let payload = Self::build_payload(event, self.max_chars);
 
             let resp = send_reqwest(
-                client.post(self.api_url.clone()).json(&payload),
+                client.post(self.api_url.as_str()).json(&payload),
                 "serverchan",
             )
             .await?;

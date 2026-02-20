@@ -168,7 +168,7 @@ impl Sink for GitHubCommentSink {
 
             let resp = send_reqwest(
                 self.client
-                    .post(self.api_url.clone())
+                    .post(self.api_url.as_str())
                     .header("Accept", "application/vnd.github+json")
                     .header("User-Agent", "notify-kit")
                     .header("X-GitHub-Api-Version", "2022-11-28")

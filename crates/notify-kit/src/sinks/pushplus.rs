@@ -211,8 +211,11 @@ impl Sink for PushPlusSink {
                 self.max_chars,
             );
 
-            let resp =
-                send_reqwest(client.post(self.api_url.clone()).json(&payload), "pushplus").await?;
+            let resp = send_reqwest(
+                client.post(self.api_url.as_str()).json(&payload),
+                "pushplus",
+            )
+            .await?;
 
             let status = resp.status();
             if !status.is_success() {

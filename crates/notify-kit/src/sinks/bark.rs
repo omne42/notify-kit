@@ -173,7 +173,7 @@ impl Sink for BarkSink {
             );
 
             let resp =
-                send_reqwest(client.post(self.api_url.clone()).json(&payload), "bark").await?;
+                send_reqwest(client.post(self.api_url.as_str()).json(&payload), "bark").await?;
 
             let status = resp.status();
             if !status.is_success() {

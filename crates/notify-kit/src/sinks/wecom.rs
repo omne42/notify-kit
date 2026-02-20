@@ -117,7 +117,7 @@ impl Sink for WeComWebhookSink {
             let payload = Self::build_payload(event, self.max_chars);
 
             let resp = send_reqwest(
-                client.post(self.webhook_url.clone()).json(&payload),
+                client.post(self.webhook_url.as_str()).json(&payload),
                 "wecom webhook",
             )
             .await?;

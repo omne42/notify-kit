@@ -273,7 +273,7 @@ impl Sink for GenericWebhookSink {
             let payload = Self::build_payload(event, &self.payload_field, self.max_chars);
 
             let resp = send_reqwest(
-                client.post(self.url.clone()).json(&payload),
+                client.post(self.url.as_str()).json(&payload),
                 "generic webhook",
             )
             .await?;

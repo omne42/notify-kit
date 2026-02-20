@@ -119,7 +119,7 @@ impl Sink for TelegramBotSink {
             let payload = Self::build_payload(event, &self.chat_id, self.max_chars);
 
             let resp = send_reqwest(
-                self.client.post(self.api_url.clone()).json(&payload),
+                self.client.post(self.api_url.as_str()).json(&payload),
                 "telegram",
             )
             .await?;
