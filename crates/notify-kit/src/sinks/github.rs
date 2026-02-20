@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::Event;
 use crate::sinks::http::{
     DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, read_text_body_limited, redact_url,
-    send_reqwest,
+    send_reqwest, try_drain_response_body_for_reuse,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
@@ -180,6 +180,7 @@ impl Sink for GitHubCommentSink {
 
             let status = resp.status();
             if status.is_success() {
+                try_drain_response_body_for_reuse(resp).await;
                 return Ok(());
             }
 

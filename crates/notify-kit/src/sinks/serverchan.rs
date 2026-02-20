@@ -155,8 +155,11 @@ fn build_serverchan_url(send_key: &str) -> crate::Result<(ServerChanKind, reqwes
         let Some(pos) = rest.find('t') else {
             return Err(anyhow::anyhow!("invalid serverchan send_key").into());
         };
-        let (uid_str, _tail) = rest.split_at(pos);
+        let (uid_str, tail) = rest.split_at(pos);
         if uid_str.is_empty() || !uid_str.chars().all(|ch| ch.is_ascii_digit()) {
+            return Err(anyhow::anyhow!("invalid serverchan send_key").into());
+        }
+        if tail.len() <= 1 {
             return Err(anyhow::anyhow!("invalid serverchan send_key").into());
         }
         let uid: u64 = uid_str
@@ -301,6 +304,16 @@ mod tests {
     #[test]
     fn rejects_send_key_with_reserved_url_chars() {
         let cfg = ServerChanConfig::new("SCTbad?x=1");
+        let err = ServerChanSink::new(cfg).expect_err("expected invalid send_key");
+        assert!(
+            err.to_string().contains("invalid serverchan send_key"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn rejects_sc3_send_key_without_suffix_code() {
+        let cfg = ServerChanConfig::new("sctp123t");
         let err = ServerChanSink::new(cfg).expect_err("expected invalid send_key");
         assert!(
             err.to_string().contains("invalid serverchan send_key"),

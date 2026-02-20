@@ -46,6 +46,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- `DiscordWebhookSink` / `GenericWebhookSink` / `GitHubCommentSink`：在成功响应路径增加“有界响应体排空”（仅在可判定小响应体时），提升 HTTP 连接复用率并减少高频发送场景下的额外建连开销。
 - `Hub`：内部 `enabled_kinds` 索引从 `BTreeSet` 查找切换为 `HashSet`（保持对外配置类型不变），降低高频 `notify/send` kind 过滤路径的查找复杂度。
 - `bots/_shared/opencode`：`buildResponseText` 改为收集文本分片后一次性 `join("\n")`，避免大量分片时字符串 `+=` 反复扩容与拷贝。
 - `Hub`：在仅配置 1 个 sink 的常见场景走单 sink 快路径，避免 `FuturesUnordered` 调度开销，降低发送热路径 CPU 与分配成本。
@@ -108,6 +109,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Dev: `githooks/pre-commit` 新增严格门禁（`scripts/pre-commit-check.sh`），提交前执行 clippy（`-D warnings`）与生产目标关键 lint（`unwrap/expect`、`let _ =` 忽略 must_use、冗余 clone）。
 
 ### Fixed
+- `ServerChanSink`：修复 SC3 `send_key` 边界校验缺口；`sctp{uid}t`（缺少后缀 code）现在会在构造阶段被拒绝，避免生成无效目标 URL 后在发送期失败。
 - Webhook/API sinks: IPv6 公网 IP 判定补齐 `100::/64`（discard-only）与 `2001:2::/48`（benchmarking）保留网段，避免 SSRF 防护误放行。
 - `bots/_shared/opencode`：修复 `runEventSubscriptionLoop` 在“快速事件流 + handler 快速完成/失败”时，已完成结果可能在 race 落败分支被提前消费并丢弃的问题；该问题会导致错误延迟/丢失重连信号，并可能引发已完成结果队列持续增长。
 - `bots/_shared/opencode`：修复 `runEventSubscriptionLoop` 在“事件流快于 handler 完成”时重复对同一 in-flight Promise 挂接 race 监听导致的回调堆积问题，降低长期运行进程的瞬时内存增长风险。

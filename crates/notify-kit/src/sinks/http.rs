@@ -606,6 +606,16 @@ pub(crate) async fn read_text_body_limited(
     Ok(decode_text_body_lossy(buf, truncated))
 }
 
+pub(crate) async fn try_drain_response_body_for_reuse(mut resp: reqwest::Response) {
+    let Some(content_length) = resp.content_length() else {
+        return;
+    };
+    if content_length == 0 || content_length > RESPONSE_BODY_DRAIN_LIMIT_BYTES as u64 {
+        return;
+    }
+    drain_response_body_limited(&mut resp, RESPONSE_BODY_DRAIN_LIMIT_BYTES).await;
+}
+
 fn decode_text_body_lossy(buf: Vec<u8>, truncated: bool) -> String {
     let mut out = match String::from_utf8(buf) {
         Ok(text) => text,

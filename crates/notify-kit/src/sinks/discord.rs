@@ -4,7 +4,7 @@ use crate::Event;
 use crate::sinks::http::{
     DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
     read_text_body_limited, redact_url, redact_url_str, select_http_client, send_reqwest,
-    validate_url_path_prefix,
+    try_drain_response_body_for_reuse, validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
@@ -122,6 +122,7 @@ impl Sink for DiscordWebhookSink {
 
             let status = resp.status();
             if status.is_success() {
+                try_drain_response_body_for_reuse(resp).await;
                 return Ok(());
             }
 
