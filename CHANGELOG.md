@@ -52,6 +52,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
 - `GenericWebhookSink`：关闭 DNS 公网 IP 校验时，要求同时配置 `allowed_hosts`（减少 SSRF 风险）。
+- `bots/_shared/limiter`：队列出队从 `Array.shift()` 改为游标 + 周期压缩，避免高积压时的 O(n) 复制开销。
+- `bots/opencode-slack` / `bots/opencode-feishu` / `bots/opencode-wecom` / `bots/opencode-dingtalk-stream`：tool update 路径改为 `sessionId` 反向索引查找，避免每次事件线性扫描全部会话。
 - Docs: 统一为 mdBook 文档（`./scripts/docs.sh` 本地预览/测试）。
 - Docs: 文档 Rust 代码示例统一标注为 `edition2024`。
 - Docs: mdBook 安装命令统一使用 `cargo install mdbook --locked`（更可复现）。
