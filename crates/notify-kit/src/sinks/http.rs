@@ -318,13 +318,12 @@ pub(crate) async fn build_http_client_pinned_async(
 ) -> crate::Result<reqwest::Client> {
     let host = url
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("url must have a host"))?
-        .to_string();
+        .ok_or_else(|| anyhow::anyhow!("url must have a host"))?;
 
     let addrs = resolve_url_to_public_addrs_async(url, timeout).await?;
 
     build_http_client_builder(timeout)
-        .resolve_to_addrs(&host, &addrs)
+        .resolve_to_addrs(host, &addrs)
         .build()
         .map_err(|err| anyhow::anyhow!("build reqwest client: {err}").into())
 }

@@ -165,6 +165,13 @@ fn normalize_optional_trimmed(value: Option<String>) -> crate::Result<Option<Str
 }
 
 fn remove_query_pairs(url: &mut reqwest::Url, keys_to_drop: &[&str]) {
+    let should_rewrite = url
+        .query_pairs()
+        .any(|(key, _)| keys_to_drop.contains(&key.as_ref()));
+    if !should_rewrite {
+        return;
+    }
+
     let retained_pairs: Vec<(String, String)> = url
         .query_pairs()
         .filter_map(|(key, value)| {
@@ -321,6 +328,19 @@ mod tests {
         assert_eq!(timestamp_count, 1);
         assert_eq!(sign_count, 1);
         assert_eq!(access_token_values, vec!["x".to_string()]);
+    }
+
+    #[test]
+    fn remove_query_pairs_keeps_original_url_when_no_target_keys() {
+        let mut url = reqwest::Url::parse(
+            "https://oapi.dingtalk.com/robot/send?access_token=a%20b&nonce=%2f",
+        )
+        .expect("parse url");
+        let original = url.as_str().to_string();
+
+        remove_query_pairs(&mut url, &["timestamp", "sign"]);
+
+        assert_eq!(url.as_str(), original);
     }
 
     #[test]
