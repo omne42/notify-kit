@@ -78,6 +78,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
 - `GenericWebhookSink`：关闭 DNS 公网 IP 校验时，要求同时配置 `allowed_hosts`（减少 SSRF 风险）。
 - `bots/_shared/limiter`：队列出队从 `Array.shift()` 改为游标 + 周期压缩，避免高积压时的 O(n) 复制开销。
+- `bots/_shared/session_store`：`load()` 恢复历史 entries 时改为仅统计驱逐数量，避免每条记录都创建临时 `evicted` 数组，降低大文件启动场景的瞬时分配与 GC 压力。
 - `BarkSink`：JSON Content-Type 判定改为无分配大小写比较，避免每次请求都创建临时小写字符串。
 - `sinks/text`：字段截断在“未发生截断”的常见路径改为复用借用字符串，减少临时 `String` 分配与拷贝。
 - `bots/opencode-slack` / `bots/opencode-feishu` / `bots/opencode-wecom` / `bots/opencode-dingtalk-stream`：tool update 路径改为 `sessionId` 反向索引查找，避免每次事件线性扫描全部会话。
@@ -98,6 +99,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `GenericWebhookSink`：`payload_field` / `allowed_hosts` / `path_prefix` 现在会在构造阶段去除首尾空白，避免配置含空白时误判 host/path 或生成错误字段名。
 - `GitHubCommentSink` / `TelegramBotSink` / `BarkSink` / `PushPlusSink`：关键配置（token、chat_id、device_key 等）现在会在构造阶段去除首尾空白，修复“校验通过但请求参数含空白导致发送失败”的问题。
 - `bots/_shared/session_store`：删除不存在 key 时不再标记 dirty 并触发 flush，避免无效磁盘写入与多余 I/O。
+- `bots/_shared/session_store`：进程收到 `SIGINT`/`SIGTERM` 时，flush 后改用信号语义退出码（130/143），避免中断流程被误报为成功退出。
 - `SlackWebhookSink` / `DiscordWebhookSink` / `BarkSink`：当错误信息已包含响应摘要时，不再附加“response body omitted”的矛盾文案。
 - `BarkSink`：当 API 错误信息已包含 `message` 摘要时，不再附带“response body omitted”的矛盾文案。
 - `Hub`：在提升并发发送吞吐后，失败汇总顺序仍按 sink 配置顺序稳定输出（避免并发完成顺序导致错误列表抖动）。

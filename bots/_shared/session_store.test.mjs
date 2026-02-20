@@ -48,3 +48,34 @@ test("delete existing key persists removal", async () => {
   assert.deepEqual(persisted.entries, [])
   await fs.rm(dir, { recursive: true, force: true })
 })
+
+test("set returns evicted entries when maxEntries is reached", async () => {
+  const { dir, file } = await makeTempStorePath()
+  const store = createSessionStore(file, { maxEntries: 1, flushDebounceMs: 5 })
+  await store.load()
+
+  assert.deepEqual(store.set("a", "s1"), [])
+  assert.deepEqual(store.set("b", "s2"), [["a", "s1"]])
+  assert.deepEqual([...store.map.entries()], [["b", "s2"]])
+
+  await store.close()
+  await fs.rm(dir, { recursive: true, force: true })
+})
+
+test("load compacts oversized persisted entries with maxEntries", async () => {
+  const { dir, file } = await makeTempStorePath()
+  await fs.writeFile(
+    file,
+    `${JSON.stringify({ version: 1, entries: [["a", "s1"], ["b", "s2"], ["c", "s3"]] })}\n`,
+    "utf-8",
+  )
+
+  const store = createSessionStore(file, { maxEntries: 2, flushDebounceMs: 5 })
+  await store.load()
+  assert.deepEqual([...store.map.entries()], [["b", "s2"], ["c", "s3"]])
+  await store.close()
+
+  const persisted = JSON.parse(await fs.readFile(file, "utf-8"))
+  assert.deepEqual(persisted.entries, [["b", "s2"], ["c", "s3"]])
+  await fs.rm(dir, { recursive: true, force: true })
+})

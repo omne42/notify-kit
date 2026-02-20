@@ -65,6 +65,8 @@ async function atomicWriteUtf8(filePath, content, { root = null, rootReal = null
 
 let exitHooksInstalled = false
 const exitHookFlushers = new Set()
+const SIGINT_EXIT_CODE = 130
+const SIGTERM_EXIT_CODE = 143
 
 function installGlobalExitHooks() {
   if (exitHooksInstalled) return
@@ -80,11 +82,11 @@ function installGlobalExitHooks() {
   })
   process.on("SIGINT", async () => {
     await flushAll()
-    process.exit(0)
+    process.exit(SIGINT_EXIT_CODE)
   })
   process.on("SIGTERM", async () => {
     await flushAll()
-    process.exit(0)
+    process.exit(SIGTERM_EXIT_CODE)
   })
 }
 
@@ -215,8 +217,8 @@ export function createSessionStore(
       if (!Array.isArray(item) || item.length !== 2) continue
       const [k, v] = item
       if (typeof k !== "string") continue
-      const evicted = setMapValue(k, v)
-      if (evicted.length > 0) {
+      const evictedCount = setMapValue(k, v)
+      if (evictedCount > 0) {
         evictedOnLoad = true
       }
     }
@@ -254,26 +256,29 @@ export function createSessionStore(
     return run
   }
 
-  function enforceEntryLimit(evicted) {
-    if (entryLimit <= 0) return
+  function enforceEntryLimit(evictedOut = null) {
+    if (entryLimit <= 0) return 0
+    let evictedCount = 0
     while (map.size > entryLimit) {
       const oldest = map.keys().next().value
       if (oldest === undefined) break
       const oldestValue = map.get(oldest)
       map.delete(oldest)
-      evicted.push([oldest, oldestValue])
+      if (evictedOut) {
+        evictedOut.push([oldest, oldestValue])
+      }
+      evictedCount += 1
     }
+    return evictedCount
   }
 
-  function setMapValue(key, value) {
-    const evicted = []
+  function setMapValue(key, value, evictedOut = null) {
     if (map.has(key)) {
       // Maintain insertion order so eviction drops least-recently-updated keys first.
       map.delete(key)
     }
     map.set(key, value)
-    enforceEntryLimit(evicted)
-    return evicted
+    return enforceEntryLimit(evictedOut)
   }
 
   function scheduleFlush() {
@@ -289,7 +294,8 @@ export function createSessionStore(
   }
 
   function set(key, value) {
-    const evicted = setMapValue(key, value)
+    const evicted = []
+    setMapValue(key, value, evicted)
     dirty = true
     scheduleFlush()
     return evicted
