@@ -16,7 +16,7 @@ const DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES: usize = 256;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PinnedClientKey {
     host: String,
-    timeout_ms: u64,
+    timeout: Duration,
 }
 
 #[derive(Clone)]
@@ -70,16 +70,11 @@ fn cap_pinned_client_cache_entries(
             .iter()
             .filter(|(key, _)| *key != keep)
             .min_by(|(lhs_key, lhs_val), (rhs_key, rhs_val)| {
-                (
-                    lhs_val.expires_at,
-                    lhs_key.host.as_str(),
-                    lhs_key.timeout_ms,
-                )
-                    .cmp(&(
-                        rhs_val.expires_at,
-                        rhs_key.host.as_str(),
-                        rhs_key.timeout_ms,
-                    ))
+                (lhs_val.expires_at, lhs_key.host.as_str(), lhs_key.timeout).cmp(&(
+                    rhs_val.expires_at,
+                    rhs_key.host.as_str(),
+                    rhs_key.timeout,
+                ))
             })
             .map(|(key, _)| key.clone())
         else {
@@ -258,7 +253,7 @@ async fn resolve_url_to_public_addrs_async(
     let deadline = Instant::now() + dns_timeout;
     let permit = tokio::time::timeout(
         remaining_dns_timeout(deadline)?,
-        dns_lookup_semaphore().clone().acquire_owned(),
+        dns_lookup_semaphore().acquire(),
     )
     .await
     .map_err(|_| anyhow::anyhow!("{}", dns_lookup_timeout_message()))?
@@ -312,10 +307,9 @@ pub(crate) async fn select_http_client(
     let host = url
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("url must have a host"))?;
-    let timeout_ms = u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX);
     let key = PinnedClientKey {
         host: host.to_string(),
-        timeout_ms,
+        timeout,
     };
 
     let lookup_now = Instant::now();
@@ -801,6 +795,20 @@ mod tests {
     }
 
     #[test]
+    fn pinned_client_key_keeps_sub_millisecond_timeout_precision() {
+        let host = "example.com".to_string();
+        let lhs = PinnedClientKey {
+            host: host.clone(),
+            timeout: Duration::from_micros(500),
+        };
+        let rhs = PinnedClientKey {
+            host,
+            timeout: Duration::from_micros(900),
+        };
+        assert_ne!(lhs, rhs);
+    }
+
+    #[test]
     fn decode_text_body_lossy_reuses_valid_utf8_buffer() {
         let bytes = b"ok".to_vec();
         let ptr = bytes.as_ptr();
@@ -833,7 +841,7 @@ mod tests {
                 reqwest::Url::parse("https://lock-cleanup.invalid/webhook").expect("parse url");
             let key = PinnedClientKey {
                 host: "lock-cleanup.invalid".to_string(),
-                timeout_ms: 0,
+                timeout: Duration::ZERO,
             };
 
             {
