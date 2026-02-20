@@ -98,10 +98,7 @@ impl FeishuWebhookSink {
         config: FeishuWebhookConfig,
         secret: impl Into<String>,
     ) -> crate::Result<Self> {
-        let secret = secret.into();
-        if secret.trim().is_empty() {
-            return Err(anyhow::anyhow!("feishu secret must not be empty").into());
-        }
+        let secret = normalize_secret(secret)?;
         Self::new_internal(config, Some(secret), false)
     }
 
@@ -109,10 +106,7 @@ impl FeishuWebhookSink {
         config: FeishuWebhookConfig,
         secret: impl Into<String>,
     ) -> crate::Result<Self> {
-        let secret = secret.into();
-        if secret.trim().is_empty() {
-            return Err(anyhow::anyhow!("feishu secret must not be empty").into());
-        }
+        let secret = normalize_secret(secret)?;
         Self::new_internal(config, Some(secret), true)
     }
 
@@ -120,10 +114,7 @@ impl FeishuWebhookSink {
         config: FeishuWebhookConfig,
         secret: impl Into<String>,
     ) -> crate::Result<Self> {
-        let secret = secret.into();
-        if secret.trim().is_empty() {
-            return Err(anyhow::anyhow!("feishu secret must not be empty").into());
-        }
+        let secret = normalize_secret(secret)?;
         Self::new_internal_async(config, Some(secret), true).await
     }
 
@@ -249,6 +240,15 @@ impl FeishuWebhookSink {
                 .map(|_| ())
         })
     }
+}
+
+fn normalize_secret(secret: impl Into<String>) -> crate::Result<String> {
+    let secret = secret.into();
+    let secret = secret.trim();
+    if secret.is_empty() {
+        return Err(anyhow::anyhow!("feishu secret must not be empty").into());
+    }
+    Ok(secret.to_string())
 }
 
 impl Sink for FeishuWebhookSink {
@@ -404,6 +404,14 @@ mod tests {
             FeishuWebhookSink::build_payload(&event, FEISHU_MAX_CHARS, Some("123"), Some("sig"));
         assert_eq!(payload["timestamp"].as_str().unwrap_or(""), "123");
         assert_eq!(payload["sign"].as_str().unwrap_or(""), "sig");
+    }
+
+    #[test]
+    fn trims_secret() {
+        let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/x");
+        let sink =
+            FeishuWebhookSink::new_with_secret(cfg, "  my_secret  ").expect("build secret sink");
+        assert_eq!(sink.secret.as_deref(), Some("my_secret"));
     }
 
     #[test]

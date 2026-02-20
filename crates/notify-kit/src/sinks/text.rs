@@ -174,13 +174,35 @@ fn truncate_chars_cow(input: &str, max_chars: usize) -> Cow<'_, str> {
         return Cow::Borrowed("");
     }
 
-    let end = byte_index_after_n_chars(input, max_chars);
-    if end == input.len() {
-        return Cow::Borrowed(input);
+    let keep_chars_for_ellipsis = max_chars.saturating_sub(3);
+    let mut seen = 0usize;
+    let mut end = input.len();
+    let mut keep_end = 0usize;
+    let mut truncated = false;
+
+    for (idx, ch) in input.char_indices() {
+        seen += 1;
+        let next = idx + ch.len_utf8();
+        if max_chars > 3 && seen == keep_chars_for_ellipsis {
+            keep_end = next;
+        }
+        if seen == max_chars {
+            end = next;
+            truncated = next < input.len();
+            break;
+        }
+    }
+
+    if !truncated {
+        if seen < max_chars {
+            return Cow::Borrowed(input);
+        }
+        if end == input.len() {
+            return Cow::Borrowed(input);
+        }
     }
 
     if max_chars > 3 {
-        let keep_end = byte_index_after_n_chars(input, max_chars - 3);
         let mut out = String::with_capacity(keep_end + 3);
         out.push_str(&input[..keep_end]);
         out.push_str("...");

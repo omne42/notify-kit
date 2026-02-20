@@ -91,24 +91,31 @@ impl std::fmt::Debug for DingTalkWebhookSink {
 
 impl DingTalkWebhookSink {
     pub fn new(config: DingTalkWebhookConfig) -> crate::Result<Self> {
-        let webhook_url =
-            parse_and_validate_https_url(&config.webhook_url, &DINGTALK_ALLOWED_HOSTS)?;
-        validate_url_path_prefix(&webhook_url, "/robot/send")?;
-        let client = build_http_client(config.timeout)?;
+        let DingTalkWebhookConfig {
+            webhook_url,
+            secret,
+            timeout,
+            max_chars,
+            enforce_public_ip,
+        } = config;
 
-        if let Some(secret) = config.secret.as_deref() {
-            if secret.trim().is_empty() {
-                return Err(anyhow::anyhow!("dingtalk secret must not be empty").into());
-            }
+        let mut webhook_url = parse_and_validate_https_url(&webhook_url, &DINGTALK_ALLOWED_HOSTS)?;
+        validate_url_path_prefix(&webhook_url, "/robot/send")?;
+        let client = build_http_client(timeout)?;
+
+        let secret = normalize_optional_trimmed(secret)?;
+
+        if secret.is_some() {
+            remove_query_pairs(&mut webhook_url, &["timestamp", "sign"]);
         }
 
         Ok(Self {
             webhook_url,
-            secret: config.secret,
+            secret,
             client,
-            timeout: config.timeout,
-            max_chars: config.max_chars,
-            enforce_public_ip: config.enforce_public_ip,
+            timeout,
+            max_chars,
+            enforce_public_ip,
         })
     }
 
@@ -135,24 +142,44 @@ impl DingTalkWebhookSink {
         let sign = hmac_sha256_base64(secret, &string_to_sign)?;
 
         let mut url = self.webhook_url.clone();
-        let retained_pairs: Vec<(String, String)> = url
-            .query_pairs()
-            .filter_map(|(key, value)| match key.as_ref() {
-                "timestamp" | "sign" => None,
-                _ => Some((key.into_owned(), value.into_owned())),
-            })
-            .collect();
-
         {
             let mut query = url.query_pairs_mut();
-            query.clear();
-            for (key, value) in &retained_pairs {
-                query.append_pair(key, value);
-            }
             query.append_pair("timestamp", &timestamp);
             query.append_pair("sign", &sign);
         }
         Ok(url)
+    }
+}
+
+fn normalize_optional_trimmed(value: Option<String>) -> crate::Result<Option<String>> {
+    match value {
+        Some(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return Err(anyhow::anyhow!("dingtalk secret must not be empty").into());
+            }
+            Ok(Some(value.to_string()))
+        }
+        None => Ok(None),
+    }
+}
+
+fn remove_query_pairs(url: &mut reqwest::Url, keys_to_drop: &[&str]) {
+    let retained_pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .filter_map(|(key, value)| {
+            if keys_to_drop.contains(&key.as_ref()) {
+                None
+            } else {
+                Some((key.into_owned(), value.into_owned()))
+            }
+        })
+        .collect();
+
+    let mut query = url.query_pairs_mut();
+    query.clear();
+    for (key, value) in retained_pairs {
+        query.append_pair(&key, &value);
     }
 }
 
@@ -294,5 +321,13 @@ mod tests {
         assert_eq!(timestamp_count, 1);
         assert_eq!(sign_count, 1);
         assert_eq!(access_token_values, vec!["x".to_string()]);
+    }
+
+    #[test]
+    fn trims_secret() {
+        let cfg = DingTalkWebhookConfig::new("https://oapi.dingtalk.com/robot/send?access_token=x")
+            .with_secret("  s3cr3t  ");
+        let sink = DingTalkWebhookSink::new(cfg).expect("build sink");
+        assert_eq!(sink.secret.as_deref(), Some("s3cr3t"));
     }
 }
