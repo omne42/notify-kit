@@ -15,16 +15,12 @@ export function buildResponseText(response) {
 
   const parts = response?.parts
   if (Array.isArray(parts)) {
-    let seenTextParts = 0
-    let joined = ""
+    const textParts = []
     for (const part of parts) {
       if (part?.type !== "text") continue
-      if (seenTextParts > 0) joined += "\n"
-      if (part.text !== undefined && part.text !== null) {
-        joined += String(part.text)
-      }
-      seenTextParts += 1
+      textParts.push(part.text !== undefined && part.text !== null ? String(part.text) : "")
     }
+    const joined = textParts.join("\n")
     if (joined) return joined
   }
 

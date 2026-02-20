@@ -46,6 +46,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- `Hub`：内部 `enabled_kinds` 索引从 `BTreeSet` 查找切换为 `HashSet`（保持对外配置类型不变），降低高频 `notify/send` kind 过滤路径的查找复杂度。
+- `bots/_shared/opencode`：`buildResponseText` 改为收集文本分片后一次性 `join("\n")`，避免大量分片时字符串 `+=` 反复扩容与拷贝。
 - `Hub`：在仅配置 1 个 sink 的常见场景走单 sink 快路径，避免 `FuturesUnordered` 调度开销，降低发送热路径 CPU 与分配成本。
 - `bots/_shared/opencode`：`runEventSubscriptionLoop` 的 in-flight 结果等待改为“单次回调 + 已完成队列”模式，避免高吞吐场景下重复 `Promise.race(inflight)` 造成的额外 Promise 监听与 CPU/内存开销。
 - `bots/_shared/opencode`：`runEventSubscriptionLoop` 的已完成结果队列改为游标出队并按需压缩，避免 burst 场景下 `Array.shift()` 的 O(n) 复制开销。

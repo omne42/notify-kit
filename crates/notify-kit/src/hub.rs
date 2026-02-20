@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fmt::Write as _;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
@@ -61,7 +61,7 @@ pub struct Hub {
 }
 
 struct HubInner {
-    enabled_kinds: Option<BTreeSet<String>>,
+    enabled_kinds: Option<HashSet<String>>,
     sinks: Vec<HubSink>,
     per_sink_timeout: Duration,
     inflight: Arc<tokio::sync::Semaphore>,
@@ -92,7 +92,9 @@ impl Hub {
             })
             .collect();
         let inner = HubInner {
-            enabled_kinds: config.enabled_kinds,
+            enabled_kinds: config
+                .enabled_kinds
+                .map(|enabled_kinds| enabled_kinds.into_iter().collect()),
             sinks,
             per_sink_timeout: config.per_sink_timeout,
             inflight: Arc::new(tokio::sync::Semaphore::new(max_inflight_events)),
