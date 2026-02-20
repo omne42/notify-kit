@@ -101,11 +101,33 @@ impl TelegramBotSink {
 
     fn build_payload(event: &Event, chat_id: &str, max_chars: usize) -> serde_json::Value {
         let text = format_event_text_limited(event, TextLimits::new(max_chars));
-        serde_json::json!({
-            "chat_id": chat_id,
-            "text": text,
-            "disable_web_page_preview": true,
-        })
+        let mut obj = serde_json::Map::with_capacity(3);
+        obj.insert("chat_id".to_string(), serde_json::json!(chat_id));
+        obj.insert("text".to_string(), serde_json::json!(text));
+        obj.insert(
+            "disable_web_page_preview".to_string(),
+            serde_json::json!(true),
+        );
+        serde_json::Value::Object(obj)
+    }
+
+    fn build_api_error(body: &serde_json::Value) -> crate::Error {
+        let code = body["error_code"].as_i64();
+        let description = body["description"].as_str().unwrap_or("");
+        let description = truncate_chars(description, 200);
+        if let Some(code) = code {
+            if !description.is_empty() {
+                return anyhow::anyhow!("telegram api error: {code}, description={description}")
+                    .into();
+            }
+            return anyhow::anyhow!("telegram api error: {code}").into();
+        }
+
+        if !description.is_empty() {
+            return anyhow::anyhow!("telegram api error: description={description}").into();
+        }
+
+        anyhow::anyhow!("telegram api error").into()
     }
 }
 
@@ -155,29 +177,7 @@ impl Sink for TelegramBotSink {
                 return Ok(());
             }
 
-            let code = body["error_code"].as_i64();
-            let description = body["description"].as_str().unwrap_or("");
-            let description = truncate_chars(description, 200);
-            if let Some(code) = code {
-                if !description.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "telegram api error: {code}, description={description} (response body omitted)"
-                    )
-                    .into());
-                }
-                return Err(
-                    anyhow::anyhow!("telegram api error: {code} (response body omitted)").into(),
-                );
-            }
-
-            if !description.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "telegram api error: description={description} (response body omitted)"
-                )
-                .into());
-            }
-
-            Err(anyhow::anyhow!("telegram api error (response body omitted)").into())
+            Err(Self::build_api_error(&body))
         })
     }
 }
@@ -249,5 +249,34 @@ mod tests {
             "{}",
             sink.api_url.as_str()
         );
+    }
+
+    #[test]
+    fn telegram_api_error_message_with_description_is_not_contradictory() {
+        let body = serde_json::json!({
+            "ok": false,
+            "error_code": 400,
+            "description": "Bad Request: bad things happened",
+        });
+        let err = TelegramBotSink::build_api_error(&body);
+        let msg = err.to_string();
+        assert!(msg.contains("telegram api error: 400"), "{msg}");
+        assert!(
+            msg.contains("description=Bad Request: bad things happened"),
+            "{msg}"
+        );
+        assert!(!msg.contains("response body omitted"), "{msg}");
+    }
+
+    #[test]
+    fn telegram_api_error_message_uses_plain_code_without_omitted() {
+        let body = serde_json::json!({
+            "ok": false,
+            "error_code": 401,
+        });
+        let err = TelegramBotSink::build_api_error(&body);
+        let msg = err.to_string();
+        assert_eq!(msg, "telegram api error: 401");
+        assert!(!msg.contains("response body omitted"), "{msg}");
     }
 }
