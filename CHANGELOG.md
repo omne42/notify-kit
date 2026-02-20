@@ -46,6 +46,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- `Hub::notify` / `Hub::send`：在无 sink 场景提前返回，避免不必要的 Tokio runtime 探测与 semaphore 开销。
+- Webhook/API sinks: `pinned client` 缓存淘汰候选改为单次 key 克隆，降低缓存接近上限时的额外分配。
 - `dingtalk` sink：签名 URL 的 `timestamp/sign` 参数清理前移到构造阶段，发送热路径不再重复扫描并重建 query 参数。
 - `sinks/text`：`truncate_chars` 的省略号截断改为单次字符扫描，减少长文本截断时的重复遍历开销。
 - `Hub`：无 sink 时增加快速返回；失败聚合路径预分配 `Vec`/`String`，减少常见错误路径的动态分配。
@@ -80,6 +82,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Dev: `githooks/pre-commit` 新增严格门禁（`scripts/pre-commit-check.sh`），提交前执行 clippy（`-D warnings`）与生产目标关键 lint（`unwrap/expect`、`let _ =` 忽略 must_use、冗余 clone）。
 
 ### Fixed
+- `Hub::send`：无 sink 时即使当前不在 Tokio runtime 中也会直接成功返回（no-op），避免误报 `NoTokioRuntime`。
 - `DingTalkWebhookSink` / `FeishuWebhookSink`：`secret` 在构造阶段统一去除首尾空白，修复“配置含空白导致签名错误、发送失败”的问题。
 - `GenericWebhookSink`：`payload_field` / `allowed_hosts` / `path_prefix` 现在会在构造阶段去除首尾空白，避免配置含空白时误判 host/path 或生成错误字段名。
 - `GitHubCommentSink` / `TelegramBotSink` / `BarkSink` / `PushPlusSink`：关键配置（token、chat_id、device_key 等）现在会在构造阶段去除首尾空白，修复“校验通过但请求参数含空白导致发送失败”的问题。

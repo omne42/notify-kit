@@ -109,6 +109,9 @@ impl Hub {
     ///   logged.
     /// - Concurrency is bounded; if overloaded, notifications are dropped (with a warning).
     pub fn notify(&self, event: Event) {
+        if self.inner.sinks.is_empty() {
+            return;
+        }
         if !self.is_kind_enabled(event.kind.as_str()) {
             return;
         }
@@ -148,15 +151,15 @@ impl Hub {
     }
 
     pub async fn send(&self, event: Event) -> crate::Result<()> {
+        if self.inner.sinks.is_empty() {
+            return Ok(());
+        }
         if !self.is_kind_enabled(event.kind.as_str()) {
             return Ok(());
         }
 
         tokio::runtime::Handle::try_current()
             .map_err(|_| anyhow::Error::from(TryNotifyError::NoTokioRuntime))?;
-        if self.inner.sinks.is_empty() {
-            return Ok(());
-        }
         let _permit = self
             .inner
             .inflight
@@ -341,6 +344,18 @@ mod tests {
 
         let event = Event::new("disabled", Severity::Info, "title");
         assert_eq!(hub.try_notify(event), Ok(()));
+    }
+
+    #[test]
+    fn send_is_noop_without_tokio_runtime_when_no_sinks() {
+        let hub = Hub::new(HubConfig::default(), Vec::new());
+        let event = Event::new("kind", Severity::Info, "title");
+
+        let out = hub
+            .send(event)
+            .now_or_never()
+            .expect("send should complete immediately without sinks");
+        assert!(out.is_ok(), "{out:#?}");
     }
 
     #[test]

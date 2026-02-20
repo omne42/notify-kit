@@ -66,32 +66,23 @@ fn cap_pinned_client_cache_entries(
     }
 
     while cache.len() > max {
-        let mut candidate_key: Option<PinnedClientKey> = None;
-        let mut candidate_exp: Option<Instant> = None;
-
-        for (key, value) in cache.iter() {
-            if key == keep {
-                continue;
-            }
-            match (candidate_exp, candidate_key.as_ref()) {
-                (None, _) => {
-                    candidate_exp = Some(value.expires_at);
-                    candidate_key = Some(key.clone());
-                }
-                (Some(exp), Some(cur_key))
-                    if value.expires_at < exp
-                        || (value.expires_at == exp
-                            && (key.host.as_str(), key.timeout_ms)
-                                < (cur_key.host.as_str(), cur_key.timeout_ms)) =>
-                {
-                    candidate_exp = Some(value.expires_at);
-                    candidate_key = Some(key.clone());
-                }
-                _ => {}
-            }
-        }
-
-        let Some(key) = candidate_key else {
+        let Some(key) = cache
+            .iter()
+            .filter(|(key, _)| *key != keep)
+            .min_by(|(lhs_key, lhs_val), (rhs_key, rhs_val)| {
+                (
+                    lhs_val.expires_at,
+                    lhs_key.host.as_str(),
+                    lhs_key.timeout_ms,
+                )
+                    .cmp(&(
+                        rhs_val.expires_at,
+                        rhs_key.host.as_str(),
+                        rhs_key.timeout_ms,
+                    ))
+            })
+            .map(|(key, _)| key.clone())
+        else {
             break;
         };
         cache.remove(&key);
