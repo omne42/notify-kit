@@ -525,6 +525,16 @@ fn is_public_ipv6(addr: Ipv6Addr) -> bool {
         return false;
     }
 
+    // Discard-only prefix 100::/64 (RFC6666)
+    if bytes[..8] == [0x01, 0x00, 0, 0, 0, 0, 0, 0] {
+        return false;
+    }
+
+    // Benchmarking 2001:2::/48 (RFC5180)
+    if bytes[..6] == [0x20, 0x01, 0x00, 0x02, 0x00, 0x00] {
+        return false;
+    }
+
     // Multicast ff00::/8
     if bytes[0] == 0xff {
         return false;
@@ -788,10 +798,15 @@ mod tests {
         assert!(!is_public_ip(IpAddr::from_str("192.52.193.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("192.175.48.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("fec0::1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("100::1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("2001:2::1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("169.254.1.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::1").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("8.8.8.8").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("::ffff:8.8.8.8").unwrap()));
+        assert!(is_public_ip(
+            IpAddr::from_str("2001:4860:4860::8888").unwrap()
+        ));
         assert!(!is_public_ip(IpAddr::from_str("::808:808").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("64:ff9b::808:808").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("2002:808:808::1").unwrap()));

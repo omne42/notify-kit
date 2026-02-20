@@ -233,9 +233,17 @@ impl HubInner {
             return Ok(());
         }
 
+        let timeout = self.per_sink_timeout;
+        if self.sinks.len() == 1 {
+            let (_idx, name, result) = Self::send_one_sink(timeout, 0, &self.sinks[0], event).await;
+            if let Err(err) = result {
+                return Err(Self::build_failures_error(vec![(0, name, err)]));
+            }
+            return Ok(());
+        }
+
         let mut failures: Vec<(usize, &'static str, crate::Error)> = Vec::new();
         let max_parallel = self.max_sink_sends_in_parallel.max(1);
-        let timeout = self.per_sink_timeout;
         let mut sink_iter = self.sinks.iter().enumerate();
 
         let mut pending = FuturesUnordered::new();
@@ -259,6 +267,12 @@ impl HubInner {
             return Ok(());
         }
 
+        Err(Self::build_failures_error(failures))
+    }
+
+    fn build_failures_error(
+        mut failures: Vec<(usize, &'static str, crate::Error)>,
+    ) -> crate::Error {
         if failures.len() > 1 {
             failures.sort_unstable_by_key(|(idx, _, _)| *idx);
         }
@@ -270,10 +284,10 @@ impl HubInner {
             msg.push_str(name);
             msg.push_str(": ");
             if write!(&mut msg, "{err:#}").is_err() {
-                return Err(anyhow::anyhow!("failed to format sink error").into());
+                return anyhow::anyhow!("failed to format sink error").into();
             }
         }
-        Err(anyhow::anyhow!(msg).into())
+        anyhow::anyhow!(msg).into()
     }
 }
 
