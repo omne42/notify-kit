@@ -46,6 +46,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- release: bump workspace package version to `1.0.0`.
 - Webhook/API sinks: `select_http_client` 在命中过期 `pinned client` 条目时会先清理再进入刷新流程，减少失败重建场景下的无效缓存驻留与后续冗余检查。
 - `DiscordWebhookSink` / `GenericWebhookSink` / `GitHubCommentSink`：在成功响应路径增加“有界响应体排空”（仅在可判定小响应体时），提升 HTTP 连接复用率并减少高频发送场景下的额外建连开销。
 - `Hub`：内部 `enabled_kinds` 索引从 `BTreeSet` 查找切换为 `HashSet`（保持对外配置类型不变），降低高频 `notify/send` kind 过滤路径的查找复杂度。
