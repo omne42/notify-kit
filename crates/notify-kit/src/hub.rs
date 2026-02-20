@@ -154,14 +154,16 @@ impl Hub {
 
         tokio::runtime::Handle::try_current()
             .map_err(|_| anyhow::Error::from(TryNotifyError::NoTokioRuntime))?;
+        if self.inner.sinks.is_empty() {
+            return Ok(());
+        }
         let _permit = self
             .inner
             .inflight
-            .clone()
-            .acquire_owned()
+            .acquire()
             .await
             .map_err(|_| anyhow::anyhow!("hub inflight semaphore closed"))?;
-        self.inner.clone().send(Arc::new(event)).await
+        self.inner.clone().send(&event).await
     }
 
     fn is_kind_enabled(&self, kind: &str) -> bool {
@@ -185,8 +187,7 @@ impl Hub {
 
         handle.spawn(async move {
             let _permit = permit;
-            let event = Arc::new(event);
-            if let Err(err) = inner.send(Arc::clone(&event)).await {
+            if let Err(err) = inner.send(&event).await {
                 tracing::warn!(sink = "hub", kind = %event.kind, "notify failed: {err}");
             }
         });
@@ -195,9 +196,33 @@ impl Hub {
 }
 
 impl HubInner {
-    async fn send(self: Arc<Self>, event: Arc<Event>) -> crate::Result<()> {
+    async fn send_one_sink(
+        timeout: Duration,
+        idx: usize,
+        sink: &HubSink,
+        event: &Event,
+    ) -> (usize, &'static str, crate::Result<()>) {
         const UNKNOWN_SINK_NAME: &str = "<unknown>";
 
+        let Some(name) = sink.name else {
+            return (
+                idx,
+                UNKNOWN_SINK_NAME,
+                Err(anyhow::anyhow!("sink panicked").into()),
+            );
+        };
+        let result = AssertUnwindSafe(async move {
+            tokio::time::timeout(timeout, sink.sink.send(event))
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("timeout after {timeout:?}").into()))
+        })
+        .catch_unwind()
+        .await
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("sink panicked").into()));
+        (idx, name, result)
+    }
+
+    async fn send(self: Arc<Self>, event: &Event) -> crate::Result<()> {
         if self.sinks.is_empty() {
             return Ok(());
         }
@@ -207,39 +232,12 @@ impl HubInner {
         let timeout = self.per_sink_timeout;
         let mut sink_iter = self.sinks.iter().enumerate();
 
-        let make_send_future = |idx: usize,
-                                sink: Arc<dyn Sink>,
-                                sink_name: Option<&'static str>,
-                                event: Arc<Event>| async move {
-            let Some(name) = sink_name else {
-                return (
-                    idx,
-                    UNKNOWN_SINK_NAME,
-                    Err(anyhow::anyhow!("sink panicked").into()),
-                );
-            };
-            let result = AssertUnwindSafe(async move {
-                tokio::time::timeout(timeout, sink.send(&event))
-                    .await
-                    .unwrap_or_else(|_| Err(anyhow::anyhow!("timeout after {timeout:?}").into()))
-            })
-            .catch_unwind()
-            .await
-            .unwrap_or_else(|_| Err(anyhow::anyhow!("sink panicked").into()));
-            (idx, name, result)
-        };
-
         let mut pending = FuturesUnordered::new();
         for _ in 0..max_parallel {
             let Some((idx, hub_sink)) = sink_iter.next() else {
                 break;
             };
-            pending.push(make_send_future(
-                idx,
-                Arc::clone(&hub_sink.sink),
-                hub_sink.name,
-                Arc::clone(&event),
-            ));
+            pending.push(Self::send_one_sink(timeout, idx, hub_sink, event));
         }
 
         while let Some((idx, name, result)) = pending.next().await {
@@ -247,12 +245,7 @@ impl HubInner {
                 failures.push((idx, name, err));
             }
             if let Some((next_idx, next_hub_sink)) = sink_iter.next() {
-                pending.push(make_send_future(
-                    next_idx,
-                    Arc::clone(&next_hub_sink.sink),
-                    next_hub_sink.name,
-                    Arc::clone(&event),
-                ));
+                pending.push(Self::send_one_sink(timeout, next_idx, next_hub_sink, event));
             }
         }
 

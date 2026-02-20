@@ -55,6 +55,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `Hub`：sink 并发发送从“按 chunk 全量等待”调整为“固定并发窗口持续补位”，在保持并发上限与错误聚合语义不变的前提下提升多 sink 混合延迟场景的吞吐。
 - `HubConfig`：默认 `per_sink_timeout` 从 `2s` 调整为 `5s`，避免 HTTP sinks 默认超时与 DNS 预检叠加导致的误超时。
 - `Hub`：`notify/try_notify` 日志路径不再为 `Event.kind` 进行多余的 `String` 克隆；过载丢弃路径也避免提前分配 `Arc<Event>`。
+- `Hub`：sink 发送热路径改为借用 `&Event` 透传（不再为每次通知构造 `Arc<Event>` 并做额外引用计数），并在 `send()` 的空 sink 场景跳过 semaphore 获取。
 - `Hub`：聚合 sink 错误消息时改为直接写入 `String`（减少临时 `format!` 分配）。
 - `Hub`：sink 执行结果归一化改为单路径表达式（timeout/panic），减少发送热路径中的分支与临时匹配开销。
 - `Hub`：在构造阶段缓存 sink 名称，并保留 `Sink::name()` panic 的失败语义（`<unknown>: sink panicked`），减少发送热路径重复名称获取与 panic 捕获开销。
