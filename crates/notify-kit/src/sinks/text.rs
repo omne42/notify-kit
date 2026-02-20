@@ -94,6 +94,10 @@ impl LimitedChars {
         self.truncated || self.max == 0 || self.out_chars >= self.max
     }
 
+    fn remaining_chars(&self) -> usize {
+        self.max.saturating_sub(self.out_chars)
+    }
+
     fn push_char(&mut self, ch: char) {
         if self.truncated || self.max == 0 {
             return;
@@ -154,7 +158,14 @@ fn format_event_text_parts_limited(
         let body = body.trim();
         if !body.is_empty() {
             if !out.is_empty() {
+                if out.remaining_chars() <= 1 {
+                    out.truncated = true;
+                    return out.finish();
+                }
                 out.push_char('\n');
+            }
+            if out.is_full() {
+                return out.finish();
             }
             let body = truncate_chars_cow(body, limits.max_body_chars);
             out.push_str(body.as_ref());
@@ -169,11 +180,24 @@ fn format_event_text_parts_limited(
             break;
         }
         if !out.is_empty() {
+            if out.remaining_chars() <= 1 {
+                out.truncated = true;
+                break;
+            }
             out.push_char('\n');
+        }
+        if out.is_full() {
+            break;
         }
         let key = truncate_chars_cow(k, limits.max_tag_key_chars);
         out.push_str(key.as_ref());
+        if out.is_full() {
+            break;
+        }
         out.push_char('=');
+        if out.is_full() {
+            break;
+        }
         let value = truncate_chars_cow(v, limits.max_tag_value_chars);
         out.push_str(value.as_ref());
     }
@@ -338,5 +362,31 @@ mod tests {
             },
         );
         assert!(out.is_empty(), "{out}");
+    }
+
+    #[test]
+    fn format_event_text_limited_no_trailing_newline_when_body_cannot_fit() {
+        let event = Event::new("k", Severity::Info, "a").with_body("body");
+        let out = format_event_text_limited(
+            &event,
+            TextLimits {
+                max_chars: 2,
+                ..TextLimits::default()
+            },
+        );
+        assert_eq!(out, "a");
+    }
+
+    #[test]
+    fn format_event_text_limited_no_trailing_newline_when_tag_cannot_fit() {
+        let event = Event::new("k", Severity::Info, "a").with_tag("k", "v");
+        let out = format_event_text_limited(
+            &event,
+            TextLimits {
+                max_chars: 2,
+                ..TextLimits::default()
+            },
+        );
+        assert_eq!(out, "a");
     }
 }
