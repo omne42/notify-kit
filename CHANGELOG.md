@@ -47,6 +47,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 
 ### Changed
 - `Hub`：无 sink 时增加快速返回；失败聚合路径预分配 `Vec`/`String`，减少常见错误路径的动态分配。
+- `Hub`：失败列表改为按需分配（不再按 sink 总数预分配），降低成功热路径的瞬时内存分配。
 - `BarkSink` / `PushPlusSink`：将配置项空白规范化前移到构造阶段，避免发送热路径重复 `trim`。
 - `Hub`：sink 发送调度从额外 `Box::pin` 包装改为直接 async future，减少每个 sink 发送路径的一次堆分配。
 - `Hub`：sink 并发发送从“按 chunk 全量等待”调整为“固定并发窗口持续补位”，在保持并发上限与错误聚合语义不变的前提下提升多 sink 混合延迟场景的吞吐。
@@ -100,6 +101,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: 公网 IP 判定现在会正确处理 IPv4-mapped IPv6（例如 `::ffff:127.0.0.1`），避免绕过 SSRF 防护。
 - Webhook/API sinks: 公网 IP 判定现在会识别 NAT64 well-known prefix `64:ff9b::/96`，按嵌入的 IPv4 再判定（兼容 DNS64 且避免绕过 SSRF 防护）。
 - Webhook/API sinks: 公网 IP 判定现在会识别 6to4 `2002::/16`，按嵌入的 IPv4 再判定（避免绕过 SSRF 防护）。
+- Webhook/API sinks: 公网 IP 判定现在会拒绝 IPv4-compatible IPv6（`::/96`），避免特殊地址表示绕过公网 IP 校验。
 - Webhook/API sinks: IPv6 公网 IP 判定现在会拒绝 site-local `fec0::/10`（例如 `fec0::1`）。
 - Webhook/API sinks: IPv4 公网 IP 判定补齐更多 RFC6890 特殊用途网段（例如 `192.0.0.0/24`、`192.88.99.0/24`）。
 - Webhook/API sinks: `dns lookup timeout` 错误现在会注明 DNS 超时上限为 `2s`（`min(timeout, 2s)`）。

@@ -497,7 +497,7 @@ fn is_public_ipv4(addr: Ipv4Addr) -> bool {
 }
 
 fn is_public_ipv6(addr: Ipv6Addr) -> bool {
-    if let Some(v4) = addr.to_ipv4() {
+    if let Some(v4) = ipv4_from_ipv6_mapped(addr) {
         return is_public_ipv4(v4);
     }
 
@@ -510,6 +510,12 @@ fn is_public_ipv6(addr: Ipv6Addr) -> bool {
     }
 
     let bytes = addr.octets();
+
+    // IPv4-compatible IPv6 (::/96) is deprecated and should never be treated
+    // as publicly routable for SSRF checks.
+    if bytes[..12] == [0; 12] {
+        return false;
+    }
 
     // Unspecified :: / loopback ::1
     if addr.is_unspecified() || addr.is_loopback() {
@@ -542,6 +548,15 @@ fn is_public_ipv6(addr: Ipv6Addr) -> bool {
     }
 
     true
+}
+
+fn ipv4_from_ipv6_mapped(addr: Ipv6Addr) -> Option<Ipv4Addr> {
+    let bytes = addr.octets();
+    // IPv4-mapped IPv6 (::ffff:0:0/96)
+    if bytes[..10] == [0; 10] && bytes[10] == 0xff && bytes[11] == 0xff {
+        return Some(Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15]));
+    }
+    None
 }
 
 fn ipv4_from_nat64_well_known_prefix(addr: Ipv6Addr) -> Option<Ipv4Addr> {
@@ -748,10 +763,12 @@ mod tests {
     fn ip_global_checks_work_for_common_ranges() {
         assert!(!is_public_ip(IpAddr::from_str("127.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::ffff:127.0.0.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("::7f00:1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("64:ff9b::7f00:1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("2002:7f00:1::1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("10.0.0.1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("::ffff:10.0.0.1").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("::a00:1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("64:ff9b::a00:1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("2002:a00:1::1").unwrap()));
         assert!(!is_public_ip(IpAddr::from_str("192.0.0.1").unwrap()));
@@ -772,6 +789,7 @@ mod tests {
         assert!(!is_public_ip(IpAddr::from_str("::1").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("8.8.8.8").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("::ffff:8.8.8.8").unwrap()));
+        assert!(!is_public_ip(IpAddr::from_str("::808:808").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("64:ff9b::808:808").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("2002:808:808::1").unwrap()));
     }

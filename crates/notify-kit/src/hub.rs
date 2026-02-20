@@ -202,8 +202,7 @@ impl HubInner {
             return Ok(());
         }
 
-        let mut failures: Vec<(usize, &'static str, crate::Error)> =
-            Vec::with_capacity(self.sinks.len());
+        let mut failures: Vec<(usize, &'static str, crate::Error)> = Vec::new();
         let max_parallel = self.max_sink_sends_in_parallel.max(1);
         let timeout = self.per_sink_timeout;
         let mut sink_iter = self.sinks.iter().enumerate();
