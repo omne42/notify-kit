@@ -347,12 +347,23 @@ pub(crate) async fn select_http_client(
     };
 
     let lookup_now = Instant::now();
-    {
+    let should_cleanup_expired_cache_entry = {
         let cache = pinned_client_cache().read().await;
-        if let Some(cached) = cache.get(&key) {
-            if cached.expires_at > lookup_now {
-                return Ok(cached.client.clone());
-            }
+        match cache.get(&key) {
+            Some(cached) if cached.expires_at > lookup_now => return Ok(cached.client.clone()),
+            Some(_) => true,
+            None => false,
+        }
+    };
+
+    if should_cleanup_expired_cache_entry {
+        let mut cache = pinned_client_cache().write().await;
+        let now = Instant::now();
+        if cache
+            .get(&key)
+            .is_some_and(|cached| cached.expires_at <= now)
+        {
+            cache.remove(&key);
         }
     }
 
@@ -969,6 +980,52 @@ mod tests {
             assert!(
                 !locks.contains_key(&key),
                 "build lock entry should be removed after cancelled request"
+            );
+        });
+    }
+
+    #[test]
+    fn select_http_client_cleans_expired_cache_entry_when_refresh_fails() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime");
+
+        rt.block_on(async {
+            let timeout = Duration::ZERO;
+            let url = reqwest::Url::parse("https://expired-cache-cleanup.invalid/webhook")
+                .expect("parse url");
+            let key = PinnedClientKey {
+                host: "expired-cache-cleanup.invalid".to_string(),
+                timeout,
+            };
+
+            {
+                let mut cache = pinned_client_cache().write().await;
+                cache.remove(&key);
+                cache.insert(
+                    key.clone(),
+                    CachedPinnedClient {
+                        client: build_http_client(Duration::from_millis(10)).expect("build client"),
+                        expires_at: Instant::now() - Duration::from_secs(1),
+                    },
+                );
+            }
+            {
+                let mut locks = lock_pinned_client_build_locks();
+                locks.remove(&key);
+            }
+
+            let client = build_http_client(Duration::from_millis(10)).expect("build client");
+            let err = select_http_client(&client, timeout, &url, true)
+                .await
+                .expect_err("expected dns timeout error");
+            assert!(err.to_string().contains("dns lookup timeout"), "{err:#}");
+
+            let cache = pinned_client_cache().read().await;
+            assert!(
+                !cache.contains_key(&key),
+                "expired cache entry should be removed after failed refresh"
             );
         });
     }

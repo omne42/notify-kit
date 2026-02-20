@@ -46,6 +46,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- Webhook/API sinks: `select_http_client` 在命中过期 `pinned client` 条目时会先清理再进入刷新流程，减少失败重建场景下的无效缓存驻留与后续冗余检查。
 - `DiscordWebhookSink` / `GenericWebhookSink` / `GitHubCommentSink`：在成功响应路径增加“有界响应体排空”（仅在可判定小响应体时），提升 HTTP 连接复用率并减少高频发送场景下的额外建连开销。
 - `Hub`：内部 `enabled_kinds` 索引从 `BTreeSet` 查找切换为 `HashSet`（保持对外配置类型不变），降低高频 `notify/send` kind 过滤路径的查找复杂度。
 - `bots/_shared/opencode`：`buildResponseText` 改为收集文本分片后一次性 `join("\n")`，避免大量分片时字符串 `+=` 反复扩容与拷贝。
@@ -110,6 +111,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Dev: `githooks/pre-commit` 新增严格门禁（`scripts/pre-commit-check.sh`），提交前执行 clippy（`-D warnings`）与生产目标关键 lint（`unwrap/expect`、`let _ =` 忽略 must_use、冗余 clone）。
 
 ### Fixed
+- Webhook/API sinks: 修复 `pinned client` 过期后若刷新失败（如 DNS 超时）时，过期缓存条目可能长期残留的问题，并新增回归测试覆盖该路径。
 - `ServerChanSink`：修复 SC3 `send_key` 边界校验缺口；`sctp{uid}t`（缺少后缀 code）现在会在构造阶段被拒绝，避免生成无效目标 URL 后在发送期失败。
 - Webhook/API sinks: IPv6 公网 IP 判定补齐 `100::/64`（discard-only）与 `2001:2::/48`（benchmarking）保留网段，避免 SSRF 防护误放行。
 - `bots/_shared/opencode`：修复 `runEventSubscriptionLoop` 在“快速事件流 + handler 快速完成/失败”时，已完成结果可能在 race 落败分支被提前消费并丢弃的问题；该问题会导致错误延迟/丢失重连信号，并可能引发已完成结果队列持续增长。
