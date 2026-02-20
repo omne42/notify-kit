@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
@@ -226,7 +227,9 @@ impl HubInner {
             msg.push_str("- ");
             msg.push_str(name);
             msg.push_str(": ");
-            msg.push_str(&format!("{err:#}"));
+            if write!(&mut msg, "{err:#}").is_err() {
+                return Err(anyhow::anyhow!("failed to format sink error").into());
+            }
         }
         Err(anyhow::anyhow!(msg).into())
     }

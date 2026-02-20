@@ -48,6 +48,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 ### Changed
 - `HubConfig`：默认 `per_sink_timeout` 从 `2s` 调整为 `5s`，避免 HTTP sinks 默认超时与 DNS 预检叠加导致的误超时。
 - `Hub`：`notify/try_notify` 日志路径不再为 `Event.kind` 进行多余的 `String` 克隆；过载丢弃路径也避免提前分配 `Arc<Event>`。
+- `Hub`：聚合 sink 错误消息时改为直接写入 `String`（减少临时 `format!` 分配）。
 - `FeishuWebhookSink`：限制 webhook URL（`https` + host allowlist），禁用重定向，错误信息不再包含响应 body。
 - All built-in webhook sinks: 校验 URL path 前缀；消息构造改为“有上限”的截断与 tag cap；解析 JSON response 时限制最大读取大小（默认 `16KiB`）。
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
@@ -103,6 +104,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/opencode-wecom`：SHA1 hex 解析增加长度快速判断并用手写 hex 校验替代正则（避免超长输入触发正则扫描）。
 - Webhook/API sinks: DNS 公网 IP 校验增加超时与并发限制，避免阻塞/线程池耗尽，并对 pinned client 做短 TTL 缓存以减少重复解析。
 - Webhook/API sinks: DNS 公网 IP 校验：timeout 后将 permit 生命周期绑定到实际解析任务（防止持续 timeout 时产生无界 blocking 任务/线程），并在 timeout 路径上清理 inflight 条目避免 map 增长，同时为失败/超时结果增加短 TTL 负缓存。
+- Webhook/API sinks: `pinned client` 构建锁在失败路径下会及时移除对应 `Weak` 条目，避免失败 host 累积导致静态锁表增长。
 - `SlackWebhookSink` / `DiscordWebhookSink` / `GenericWebhookSink` / `BarkSink`：读取响应 body 失败时仍保留 HTTP status 错误上下文。
 - `BarkSink`：当响应看起来像 JSON 时，即使 Content-Type 缺失/错误也会尝试解析。
 - `bots/opencode-telegram`：支持 `OPENCODE_SESSION_STORE_PATH` 以持久化 chat → session 映射（可选）。

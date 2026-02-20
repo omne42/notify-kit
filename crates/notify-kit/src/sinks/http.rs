@@ -332,7 +332,7 @@ pub(crate) async fn select_http_client(
         }
     };
 
-    {
+    let result: crate::Result<reqwest::Client> = async {
         let _build_guard = key_lock.lock().await;
         let now = Instant::now();
         let cached_client = {
@@ -352,24 +352,18 @@ pub(crate) async fn select_http_client(
             let now = Instant::now();
             let mut cache = pinned_client_cache().write().await;
             cache.retain(|_, v| v.expires_at > now);
-            if let Some(cached) = cache.get(&key) {
+
+            let refreshed = cache.get(&key).and_then(|cached| {
                 if cached.expires_at > now {
-                    Ok(cached.client.clone())
+                    Some(cached.client.clone())
                 } else {
-                    cache.insert(
-                        key.clone(),
-                        CachedPinnedClient {
-                            client: client.clone(),
-                            expires_at: now + DEFAULT_PINNED_CLIENT_TTL,
-                        },
-                    );
-                    cap_pinned_client_cache_entries(
-                        &mut cache,
-                        DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES,
-                        &key_for_eviction,
-                    );
-                    Ok(client)
+                    None
                 }
+            });
+
+            if let Some(cached) = refreshed {
+                drop(cache);
+                Ok(cached)
             } else {
                 cache.insert(
                     key.clone(),
@@ -383,10 +377,22 @@ pub(crate) async fn select_http_client(
                     DEFAULT_MAX_PINNED_CLIENT_CACHE_ENTRIES,
                     &key_for_eviction,
                 );
+                drop(cache);
                 Ok(client)
             }
         }
     }
+    .await;
+
+    drop(key_lock);
+    {
+        let mut locks = pinned_client_build_locks().lock().await;
+        if locks.get(&key).is_some_and(|weak| weak.strong_count() == 0) {
+            locks.remove(&key);
+        }
+    }
+
+    result
 }
 
 fn is_public_ip(ip: IpAddr) -> bool {
@@ -664,6 +670,7 @@ mod tests {
     use super::*;
     use std::net::IpAddr;
     use std::str::FromStr;
+    use std::time::Duration;
 
     #[test]
     fn redact_url_str_never_leaks_path_or_query() {
@@ -743,5 +750,43 @@ mod tests {
         assert!(is_public_ip(IpAddr::from_str("::ffff:8.8.8.8").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("64:ff9b::808:808").unwrap()));
         assert!(is_public_ip(IpAddr::from_str("2002:808:808::1").unwrap()));
+    }
+
+    #[test]
+    fn select_http_client_cleans_build_lock_on_error() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build tokio runtime");
+
+        rt.block_on(async {
+            let url =
+                reqwest::Url::parse("https://lock-cleanup.invalid/webhook").expect("parse url");
+            let key = PinnedClientKey {
+                host: "lock-cleanup.invalid".to_string(),
+                timeout_ms: 0,
+            };
+
+            {
+                let mut cache = pinned_client_cache().write().await;
+                cache.remove(&key);
+            }
+            {
+                let mut locks = pinned_client_build_locks().lock().await;
+                locks.remove(&key);
+            }
+
+            let client = build_http_client(Duration::from_millis(10)).expect("build client");
+            let err = select_http_client(&client, Duration::ZERO, &url, true)
+                .await
+                .expect_err("expected dns timeout error");
+            assert!(err.to_string().contains("dns lookup timeout"), "{err:#}");
+
+            let locks = pinned_client_build_locks().lock().await;
+            assert!(
+                !locks.contains_key(&key),
+                "build lock entry should be removed after failed request"
+            );
+        });
     }
 }
