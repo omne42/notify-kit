@@ -165,21 +165,18 @@ fn normalize_optional_trimmed(value: Option<String>) -> crate::Result<Option<Str
 }
 
 fn remove_query_pairs(url: &mut reqwest::Url, keys_to_drop: &[&str]) {
-    let mut should_rewrite = false;
-    let retained_pairs: Vec<(String, String)> = url
+    let should_rewrite = url
         .query_pairs()
-        .filter_map(|(key, value)| {
-            if keys_to_drop.contains(&key.as_ref()) {
-                should_rewrite = true;
-                None
-            } else {
-                Some((key.into_owned(), value.into_owned()))
-            }
-        })
-        .collect();
+        .any(|(key, _)| keys_to_drop.contains(&key.as_ref()));
     if !should_rewrite {
         return;
     }
+
+    let retained_pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(key, _)| !keys_to_drop.contains(&key.as_ref()))
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
 
     let mut query = url.query_pairs_mut();
     query.clear();

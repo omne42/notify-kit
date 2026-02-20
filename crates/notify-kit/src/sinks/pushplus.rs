@@ -187,6 +187,14 @@ fn normalize_optional_trimmed(value: Option<String>) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn pushplus_api_error(code: i64, msg: &str) -> crate::Error {
+    let msg = truncate_chars(msg, 200);
+    if msg.is_empty() {
+        return anyhow::anyhow!("pushplus api error: code={code} (response body omitted)").into();
+    }
+    anyhow::anyhow!("pushplus api error: code={code}, msg={msg}").into()
+}
+
 impl Sink for PushPlusSink {
     fn name(&self) -> &'static str {
         "pushplus"
@@ -249,11 +257,7 @@ impl Sink for PushPlusSink {
             }
 
             let msg = body["msg"].as_str().unwrap_or("");
-            let msg = truncate_chars(msg, 200);
-            Err(anyhow::anyhow!(
-                "pushplus api error: code={code}, msg={msg} (response body omitted)"
-            )
-            .into())
+            Err(pushplus_api_error(code, msg))
         })
     }
 }
@@ -311,5 +315,20 @@ mod tests {
         assert_eq!(sink.channel.as_deref(), Some("chan"));
         assert_eq!(sink.template.as_deref(), Some("txt"));
         assert_eq!(sink.topic.as_deref(), Some("topic"));
+    }
+
+    #[test]
+    fn pushplus_api_error_message_is_not_contradictory() {
+        let err = pushplus_api_error(500, "failed");
+        let msg = err.to_string();
+        assert!(msg.contains("msg=failed"), "{msg}");
+        assert!(!msg.contains("response body omitted"), "{msg}");
+    }
+
+    #[test]
+    fn pushplus_api_error_message_uses_omitted_when_empty() {
+        let err = pushplus_api_error(500, "");
+        let msg = err.to_string();
+        assert!(msg.contains("response body omitted"), "{msg}");
     }
 }
