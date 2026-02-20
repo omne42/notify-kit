@@ -56,6 +56,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: 默认启用 DNS 公网 IP 校验（发送前执行，可关闭）。
 - `GenericWebhookSink`：关闭 DNS 公网 IP 校验时，要求同时配置 `allowed_hosts`（减少 SSRF 风险）。
 - `bots/_shared/limiter`：队列出队从 `Array.shift()` 改为游标 + 周期压缩，避免高积压时的 O(n) 复制开销。
+- `BarkSink`：JSON Content-Type 判定改为无分配大小写比较，避免每次请求都创建临时小写字符串。
 - `sinks/text`：字段截断在“未发生截断”的常见路径改为复用借用字符串，减少临时 `String` 分配与拷贝。
 - `bots/opencode-slack` / `bots/opencode-feishu` / `bots/opencode-wecom` / `bots/opencode-dingtalk-stream`：tool update 路径改为 `sessionId` 反向索引查找，避免每次事件线性扫描全部会话。
 - Docs: 统一为 mdBook 文档（`./scripts/docs.sh` 本地预览/测试）。
@@ -120,6 +121,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `bots/_shared/session_store`：退出 hook 支持多个 store 实例（避免只 flush 第一个）。
 - `bots/_shared/session_store`：`close()` 会取消 debounce 并触发一次 flush（返回 Promise），同时解除 exit hook 注册（避免短生命周期 store 累积 flush 回调）。
 - `bots/_shared/opencode`：`runEventSubscriptionLoop` 在并发未打满且事件流暂时阻塞时，也会及时消费 `onEvent` 失败并触发重连（避免卡死在单次订阅）。
+- `bots/_shared/opencode`：`runEventSubscriptionLoop` 在 handler 失败提前退出时会吞掉未完成 `next()` 的晚到拒绝，避免重连窗口出现未处理 Promise 拒绝告警。
 - `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加超时 + 并发限制（避免 DNS 卡死导致初始化阻塞/线程堆积）。
 - `FeishuWebhookSink`：严格模式下的构造期 DNS 公网 IP 校验增加 inflight 去重 + TTL 缓存，并对 pinned client cache 增加容量上限（避免重复/无界增长）。
 - `bots/_shared/log`：verbose 模式输出错误 stack（更易排障）。

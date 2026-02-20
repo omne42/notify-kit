@@ -244,6 +244,11 @@ export async function runEventSubscriptionLoop({
         addInflightTask(outcome.step.value)
       }
 
+      if (loopError && pendingNext && typeof pendingNext.catch === "function") {
+        // If the loop exits due to a handler failure, pending `next()` may reject later.
+        // Consume it to avoid late unhandled rejection noise on retry.
+        pendingNext.catch(() => {})
+      }
       if (loopError && typeof iterator.return === "function") {
         Promise.resolve()
           .then(() => iterator.return())

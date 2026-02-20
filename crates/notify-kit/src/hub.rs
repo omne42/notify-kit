@@ -173,9 +173,9 @@ impl Hub {
 
         handle.spawn(async move {
             let _permit = permit;
-            let kind = event.kind.clone();
-            if let Err(err) = inner.send(Arc::new(event)).await {
-                tracing::warn!(sink = "hub", kind = %kind, "notify failed: {err}");
+            let event = Arc::new(event);
+            if let Err(err) = inner.send(Arc::clone(&event)).await {
+                tracing::warn!(sink = "hub", kind = %event.kind, "notify failed: {err}");
             }
         });
         Ok(())

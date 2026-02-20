@@ -188,7 +188,11 @@ impl Sink for BarkSink {
                 .headers()
                 .get(reqwest::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
-                .is_some_and(|v| v.to_ascii_lowercase().contains("application/json"));
+                .is_some_and(|v| {
+                    v.split(';').next().is_some_and(|media_type| {
+                        media_type.trim().eq_ignore_ascii_case("application/json")
+                    })
+                });
 
             let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await {
                 Ok(body) => body,
