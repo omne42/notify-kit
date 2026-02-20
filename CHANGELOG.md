@@ -124,6 +124,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Webhook/API sinks: DNS 公网 IP 校验：timeout 后将 permit 生命周期绑定到实际解析任务（防止持续 timeout 时产生无界 blocking 任务/线程），并在 timeout 路径上清理 inflight 条目避免 map 增长，同时为失败/超时结果增加短 TTL 负缓存。
 - Webhook/API sinks: `pinned client` 构建锁在失败路径下会及时移除对应 `Weak` 条目，避免失败 host 累积导致静态锁表增长。
 - `SlackWebhookSink` / `DiscordWebhookSink` / `GenericWebhookSink` / `BarkSink`：读取响应 body 失败时仍保留 HTTP status 错误上下文。
+- `GitHubCommentSink` / `TelegramBotSink` / `DingTalkWebhookSink` / `WeComWebhookSink` / `FeishuWebhookSink` / `ServerChanSink` / `PushPlusSink`：非 2xx 时会读取并截断响应 body 后再返回错误，避免错误路径因未消费响应体导致连接复用下降，并提升定位信息。
 - `BarkSink`：当响应看起来像 JSON 时，即使 Content-Type 缺失/错误也会尝试解析。
 - `bots/opencode-telegram`：支持 `OPENCODE_SESSION_STORE_PATH` 以持久化 chat → session 映射（可选）。
 - `bots/_shared/session_store`：`rootDir` 校验加强（防 symlink 逃逸；flush 前二次校验 realpath）。

@@ -1,8 +1,11 @@
 use std::time::Duration;
 
 use crate::Event;
-use crate::sinks::http::{build_http_client, redact_url, send_reqwest};
-use crate::sinks::text::{TextLimits, format_event_text_limited};
+use crate::sinks::http::{
+    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, read_text_body_limited, redact_url,
+    send_reqwest,
+};
+use crate::sinks::text::{TextLimits, format_event_text_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
@@ -180,10 +183,24 @@ impl Sink for GitHubCommentSink {
                 return Ok(());
             }
 
-            Err(
-                anyhow::anyhow!("github comment http error: {status} (response body omitted)")
-                    .into(),
-            )
+            let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await {
+                Ok(body) => body,
+                Err(err) => {
+                    return Err(anyhow::anyhow!(
+                        "github comment http error: {status} (failed to read response body: {err})"
+                    )
+                    .into());
+                }
+            };
+            let summary = truncate_chars(body.trim(), 200);
+            if summary.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "github comment http error: {status} (response body omitted)"
+                )
+                .into());
+            }
+
+            Err(anyhow::anyhow!("github comment http error: {status}, response={summary}").into())
         })
     }
 }

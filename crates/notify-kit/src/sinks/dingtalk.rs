@@ -4,10 +4,10 @@ use crate::Event;
 use crate::sinks::crypto::hmac_sha256_base64;
 use crate::sinks::http::{
     DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
-    read_json_body_limited, redact_url, redact_url_str, select_http_client, send_reqwest,
-    validate_url_path_prefix,
+    read_json_body_limited, read_text_body_limited, redact_url, redact_url_str, select_http_client,
+    send_reqwest, validate_url_path_prefix,
 };
-use crate::sinks::text::{TextLimits, format_event_text_limited};
+use crate::sinks::text::{TextLimits, format_event_text_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
 
 const DINGTALK_ALLOWED_HOSTS: [&str; 1] = ["oapi.dingtalk.com"];
@@ -173,8 +173,25 @@ impl Sink for DingTalkWebhookSink {
 
             let status = resp.status();
             if !status.is_success() {
+                let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await
+                {
+                    Ok(body) => body,
+                    Err(err) => {
+                        return Err(anyhow::anyhow!(
+                            "dingtalk webhook http error: {status} (failed to read response body: {err})"
+                        )
+                        .into());
+                    }
+                };
+                let summary = truncate_chars(body.trim(), 200);
+                if summary.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "dingtalk webhook http error: {status} (response body omitted)"
+                    )
+                    .into());
+                }
                 return Err(anyhow::anyhow!(
-                    "dingtalk webhook http error: {status} (response body omitted)"
+                    "dingtalk webhook http error: {status}, response={summary}"
                 )
                 .into());
             }

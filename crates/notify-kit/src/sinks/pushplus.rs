@@ -3,7 +3,8 @@ use std::time::Duration;
 use crate::Event;
 use crate::sinks::http::{
     DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
-    read_json_body_limited, redact_url, select_http_client, send_reqwest, validate_url_path_prefix,
+    read_json_body_limited, read_text_body_limited, redact_url, select_http_client, send_reqwest,
+    validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_body_and_tags_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
@@ -215,10 +216,26 @@ impl Sink for PushPlusSink {
 
             let status = resp.status();
             if !status.is_success() {
-                return Err(anyhow::anyhow!(
-                    "pushplus http error: {status} (response body omitted)"
-                )
-                .into());
+                let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await
+                {
+                    Ok(body) => body,
+                    Err(err) => {
+                        return Err(anyhow::anyhow!(
+                            "pushplus http error: {status} (failed to read response body: {err})"
+                        )
+                        .into());
+                    }
+                };
+                let summary = truncate_chars(body.trim(), 200);
+                if summary.is_empty() {
+                    return Err(anyhow::anyhow!(
+                        "pushplus http error: {status} (response body omitted)"
+                    )
+                    .into());
+                }
+                return Err(
+                    anyhow::anyhow!("pushplus http error: {status}, response={summary}").into(),
+                );
             }
 
             let body = read_json_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await?;
