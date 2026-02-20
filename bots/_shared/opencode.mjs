@@ -176,6 +176,25 @@ export async function runEventSubscriptionLoop({
       }
       const iterator = stream[Symbol.asyncIterator]()
       const inflight = new Set()
+      const settledResults = []
+      let settledSignal = null
+      let pendingSettledResult = null
+
+      const waitForSettledSignal = () => {
+        if (settledSignal) return settledSignal.promise
+        let resolve
+        const promise = new Promise((r) => {
+          resolve = r
+        })
+        settledSignal = { promise, resolve }
+        return promise
+      }
+
+      const notifySettledResult = () => {
+        if (!settledSignal) return
+        settledSignal.resolve()
+        settledSignal = null
+      }
 
       const addInflightTask = (event) => {
         const task = withTimeout(
@@ -183,20 +202,33 @@ export async function runEventSubscriptionLoop({
           `${label} onEvent`,
           eventTimeoutMs,
         )
-        let tracked = null
-        tracked = task.then(
-          () => ({ ok: true, tracked }),
-          (error) => ({ ok: false, error, tracked }),
+        const tracked = task.then(
+          () => ({ ok: true }),
+          (error) => ({ ok: false, error }),
         )
         inflight.add(tracked)
+        tracked.then((result) => {
+          inflight.delete(tracked)
+          settledResults.push(result)
+          notifySettledResult()
+        })
       }
 
       const consumeSettledResult = async () => {
-        const result = await Promise.race(inflight)
-        if (result?.tracked) {
-          inflight.delete(result.tracked)
+        while (settledResults.length === 0) {
+          if (inflight.size === 0) return null
+          await waitForSettledSignal()
         }
-        return result
+        return settledResults.shift() || null
+      }
+
+      const nextSettledResult = () => {
+        if (!pendingSettledResult) {
+          pendingSettledResult = consumeSettledResult().finally(() => {
+            pendingSettledResult = null
+          })
+        }
+        return pendingSettledResult
       }
 
       let loopError = null
@@ -206,8 +238,8 @@ export async function runEventSubscriptionLoop({
       while (!streamEnded || inflight.size > 0) {
         if (inflight.size >= maxConcurrent || streamEnded) {
           if (inflight.size === 0) break
-          const result = await consumeSettledResult()
-          if (!result.ok) {
+          const result = await nextSettledResult()
+          if (result && !result.ok) {
             loopError = result.error
             break
           }
@@ -230,7 +262,7 @@ export async function runEventSubscriptionLoop({
             (step) => ({ kind: "event", step }),
             (error) => ({ kind: "event_error", error }),
           ),
-          Promise.race(inflight).then((result) => ({ kind: "result", result })),
+          nextSettledResult().then((result) => ({ kind: "result", result })),
         ])
 
         if (outcome.kind === "event_error") {
@@ -239,10 +271,7 @@ export async function runEventSubscriptionLoop({
         }
 
         if (outcome.kind === "result") {
-          if (outcome.result?.tracked) {
-            inflight.delete(outcome.result.tracked)
-          }
-          if (!outcome.result.ok) {
+          if (outcome.result && !outcome.result.ok) {
             loopError = outcome.result.error
             break
           }

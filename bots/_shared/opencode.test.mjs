@@ -143,6 +143,57 @@ void runEventSubscriptionLoop({
   assert.equal(unhandled, 0, `expected no unhandled rejections, stdout=${stdout}`)
 })
 
+test("runEventSubscriptionLoop avoids Promise.race on inflight Set", async () => {
+  const script = `
+let setRaceCalls = 0
+const originalRace = Promise.race.bind(Promise)
+Promise.race = function (iterable) {
+  if (iterable instanceof Set) {
+    setRaceCalls += 1
+  }
+  return originalRace(iterable)
+}
+
+const { runEventSubscriptionLoop } = await import(${JSON.stringify(opencodeModuleUrl)})
+console.error = () => {}
+
+setTimeout(() => {
+  console.log("SET_RACE_CALLS=" + String(setRaceCalls))
+  process.exit(0)
+}, 350)
+
+void runEventSubscriptionLoop({
+  label: "test-loop-no-set-race",
+  minBackoffMs: 10,
+  maxBackoffMs: 10,
+  jitterMs: 0,
+  maxConcurrentOnEvent: 2,
+  subscribe: async () => {
+    return {
+      stream: (async function* () {
+        for (let i = 0; i < 200; i += 1) {
+          yield { id: i }
+        }
+        await new Promise(() => {})
+      })(),
+    }
+  },
+  onEvent: async () => {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  },
+})
+`
+
+  const { code, stdout, stderr } = await runNodeScript(script)
+  assert.equal(code, 0, `child exited with non-zero code, stderr=${stderr}`)
+
+  const match = stdout.match(/SET_RACE_CALLS=(\d+)/)
+  assert.ok(match, `missing Promise.race(Set) count output, stdout=${stdout}`)
+  const setRaceCalls = Number.parseInt(match[1], 10)
+  assert.ok(Number.isFinite(setRaceCalls), `invalid Promise.race(Set) count, stdout=${stdout}`)
+  assert.equal(setRaceCalls, 0, `expected no Promise.race(Set), stdout=${stdout}`)
+})
+
 test("buildResponseText prefers info content", () => {
   const out = buildResponseText({
     info: { content: "from-info" },
