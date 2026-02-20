@@ -296,9 +296,11 @@ export function createSessionStore(
   }
 
   function del(key) {
-    map.delete(key)
+    const deleted = map.delete(key)
+    if (!deleted) return false
     dirty = true
     scheduleFlush()
+    return true
   }
 
   function installExitHooks() {

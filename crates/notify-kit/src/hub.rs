@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use futures_util::future::BoxFuture;
 use futures_util::stream::{FuturesUnordered, StreamExt};
 
 use crate::event::Event;
@@ -174,9 +173,9 @@ impl Hub {
 
         handle.spawn(async move {
             let _permit = permit;
-            let event = Arc::new(event);
-            if let Err(err) = inner.send(event.clone()).await {
-                tracing::warn!(sink = "hub", kind = %event.kind, "notify failed: {err}");
+            let kind = event.kind.clone();
+            if let Err(err) = inner.send(Arc::new(event)).await {
+                tracing::warn!(sink = "hub", kind = %kind, "notify failed: {err}");
             }
         });
         Ok(())
@@ -190,26 +189,23 @@ impl HubInner {
         let timeout = self.per_sink_timeout;
         let mut sink_iter = self.sinks.iter().cloned().enumerate();
 
-        let make_send_future =
-            |idx: usize, sink: Arc<dyn Sink>, event: Arc<Event>| -> BoxFuture<'static, _> {
-                Box::pin(async move {
-                    let name = sink.name();
-                    let result = AssertUnwindSafe(async move {
-                        match tokio::time::timeout(timeout, sink.send(&event)).await {
-                            Ok(inner) => inner,
-                            Err(_) => Err(anyhow::anyhow!("timeout after {timeout:?}").into()),
-                        }
-                    })
-                    .catch_unwind()
-                    .await;
+        let make_send_future = |idx: usize, sink: Arc<dyn Sink>, event: Arc<Event>| async move {
+            let name = sink.name();
+            let result = AssertUnwindSafe(async move {
+                match tokio::time::timeout(timeout, sink.send(&event)).await {
+                    Ok(inner) => inner,
+                    Err(_) => Err(anyhow::anyhow!("timeout after {timeout:?}").into()),
+                }
+            })
+            .catch_unwind()
+            .await;
 
-                    let result = match result {
-                        Ok(inner) => inner,
-                        Err(_) => Err(anyhow::anyhow!("sink panicked").into()),
-                    };
-                    (idx, name, result)
-                })
+            let result = match result {
+                Ok(inner) => inner,
+                Err(_) => Err(anyhow::anyhow!("sink panicked").into()),
             };
+            (idx, name, result)
+        };
 
         let mut pending = FuturesUnordered::new();
         for _ in 0..max_parallel {

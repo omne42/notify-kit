@@ -46,6 +46,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `FeishuWebhookSink::new_strict` / `new_with_secret_strict`：在构造阶段额外做一次 DNS 公网 IP 校验。
 
 ### Changed
+- `Hub`：sink 发送调度从额外 `Box::pin` 包装改为直接 async future，减少每个 sink 发送路径的一次堆分配。
 - `Hub`：sink 并发发送从“按 chunk 全量等待”调整为“固定并发窗口持续补位”，在保持并发上限与错误聚合语义不变的前提下提升多 sink 混合延迟场景的吞吐。
 - `HubConfig`：默认 `per_sink_timeout` 从 `2s` 调整为 `5s`，避免 HTTP sinks 默认超时与 DNS 预检叠加导致的误超时。
 - `Hub`：`notify/try_notify` 日志路径不再为 `Event.kind` 进行多余的 `String` 克隆；过载丢弃路径也避免提前分配 `Arc<Event>`。
@@ -67,6 +68,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - Dev: `githooks/pre-commit` 新增严格门禁（`scripts/pre-commit-check.sh`），提交前执行 clippy（`-D warnings`）与生产目标关键 lint（`unwrap/expect`、`let _ =` 忽略 must_use、冗余 clone）。
 
 ### Fixed
+- `bots/_shared/session_store`：删除不存在 key 时不再标记 dirty 并触发 flush，避免无效磁盘写入与多余 I/O。
 - `SlackWebhookSink` / `DiscordWebhookSink` / `BarkSink`：当错误信息已包含响应摘要时，不再附加“response body omitted”的矛盾文案。
 - `Hub`：在提升并发发送吞吐后，失败汇总顺序仍按 sink 配置顺序稳定输出（避免并发完成顺序导致错误列表抖动）。
 - `SoundSink`：外部命令会被回收（避免僵尸进程累积）。
