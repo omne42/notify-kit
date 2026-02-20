@@ -54,6 +54,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `Hub`：`notify/try_notify` 日志路径不再为 `Event.kind` 进行多余的 `String` 克隆；过载丢弃路径也避免提前分配 `Arc<Event>`。
 - `Hub`：聚合 sink 错误消息时改为直接写入 `String`（减少临时 `format!` 分配）。
 - `Hub`：sink 执行结果归一化改为单路径表达式（timeout/panic），减少发送热路径中的分支与临时匹配开销。
+- `Hub`：在构造阶段缓存 sink 名称，并保留 `Sink::name()` panic 的失败语义（`<unknown>: sink panicked`），减少发送热路径重复名称获取与 panic 捕获开销。
 - Webhook/API sinks: 文本响应体解码优先走 `String::from_utf8`，在合法 UTF-8 常见路径下避免一次额外拷贝，降低瞬时内存占用。
 - Webhook/API sinks: DNS 解析结果去重时基于迭代器容量提示预分配容器，减少多地址返回场景下的扩容开销。
 - `ServerChanSink::new`：URL 二次校验改为直接借用 `&str`，移除冗余临时 `String` 分配。

@@ -62,10 +62,15 @@ pub struct Hub {
 
 struct HubInner {
     enabled_kinds: Option<BTreeSet<String>>,
-    sinks: Vec<Arc<dyn Sink>>,
+    sinks: Vec<HubSink>,
     per_sink_timeout: Duration,
     inflight: Arc<tokio::sync::Semaphore>,
     max_sink_sends_in_parallel: usize,
+}
+
+struct HubSink {
+    sink: Arc<dyn Sink>,
+    name: Option<&'static str>,
 }
 
 impl Hub {
@@ -79,6 +84,13 @@ impl Hub {
         max_inflight_events: usize,
     ) -> Self {
         let max_inflight_events = max_inflight_events.max(1);
+        let sinks = sinks
+            .into_iter()
+            .map(|sink| HubSink {
+                name: std::panic::catch_unwind(AssertUnwindSafe(|| sink.name())).ok(),
+                sink,
+            })
+            .collect();
         let inner = HubInner {
             enabled_kinds: config.enabled_kinds,
             sinks,
@@ -194,18 +206,18 @@ impl HubInner {
             Vec::with_capacity(self.sinks.len());
         let max_parallel = self.max_sink_sends_in_parallel.max(1);
         let timeout = self.per_sink_timeout;
-        let mut sink_iter = self.sinks.iter().cloned().enumerate();
+        let mut sink_iter = self.sinks.iter().enumerate();
 
-        let make_send_future = |idx: usize, sink: Arc<dyn Sink>, event: Arc<Event>| async move {
-            let name = match std::panic::catch_unwind(AssertUnwindSafe(|| sink.name())) {
-                Ok(name) => name,
-                Err(_) => {
-                    return (
-                        idx,
-                        UNKNOWN_SINK_NAME,
-                        Err(anyhow::anyhow!("sink panicked").into()),
-                    );
-                }
+        let make_send_future = |idx: usize,
+                                sink: Arc<dyn Sink>,
+                                sink_name: Option<&'static str>,
+                                event: Arc<Event>| async move {
+            let Some(name) = sink_name else {
+                return (
+                    idx,
+                    UNKNOWN_SINK_NAME,
+                    Err(anyhow::anyhow!("sink panicked").into()),
+                );
             };
             let result = AssertUnwindSafe(async move {
                 tokio::time::timeout(timeout, sink.send(&event))
@@ -220,18 +232,28 @@ impl HubInner {
 
         let mut pending = FuturesUnordered::new();
         for _ in 0..max_parallel {
-            let Some((idx, sink)) = sink_iter.next() else {
+            let Some((idx, hub_sink)) = sink_iter.next() else {
                 break;
             };
-            pending.push(make_send_future(idx, sink, Arc::clone(&event)));
+            pending.push(make_send_future(
+                idx,
+                Arc::clone(&hub_sink.sink),
+                hub_sink.name,
+                Arc::clone(&event),
+            ));
         }
 
         while let Some((idx, name, result)) = pending.next().await {
             if let Err(err) = result {
                 failures.push((idx, name, err));
             }
-            if let Some((next_idx, next_sink)) = sink_iter.next() {
-                pending.push(make_send_future(next_idx, next_sink, Arc::clone(&event)));
+            if let Some((next_idx, next_hub_sink)) = sink_iter.next() {
+                pending.push(make_send_future(
+                    next_idx,
+                    Arc::clone(&next_hub_sink.sink),
+                    next_hub_sink.name,
+                    Arc::clone(&event),
+                ));
             }
         }
 
