@@ -1,6 +1,10 @@
 # FeishuWebhookSink
 
-`FeishuWebhookSink` 通过飞书群机器人 webhook 发送 **text** 消息（可选签名）。
+`FeishuWebhookSink` 通过飞书群机器人 webhook 发送消息（可选签名），支持：
+
+- 默认 `text` 消息
+- 对 `Event.body` 中的 Markdown 自动转 `post` 富文本
+- Markdown 图片（`![alt](...)`）可选自动上传为飞书图片并内嵌显示
 
 ## 构造
 
@@ -67,7 +71,7 @@ let sink = FeishuWebhookSink::new_with_secret_strict(cfg, "your_secret")?;
 
 ## 消息长度
 
-`FeishuWebhookConfig.max_chars` 用于限制最终 text 消息长度（默认 `4000`）。超出会截断并追加 `...`：
+`FeishuWebhookConfig.max_chars` 用于限制文本内容长度（默认 `4000`，超出会截断并追加 `...`）：
 
 ```rust,no_run,edition2024
 # extern crate notify_kit;
@@ -114,11 +118,42 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 ## 输出格式
 
-文本内容由以下部分组成（按顺序）：
+默认 text 模式下，文本内容由以下部分组成（按顺序）：
 
 1) `title`
 2) `body`（如果存在且非空）
 3) 每个 tag：`key=value`（逐行）
+
+当 `body` 是 Markdown 且启用富文本（默认启用）时：
+
+- 使用飞书 `post` 结构发送
+- 链接会映射为可点击富文本链接
+- 图片：
+  - 未配置应用凭据时：降级为可读文本 + 原链接
+  - 配置了应用凭据时：自动上传并以内嵌图片显示
+
+## Markdown 图片上传（可选）
+
+如果你希望 Markdown 图片真正显示为“图片”而不是链接，需要提供应用凭据：
+
+```rust,no_run,edition2024
+# extern crate notify_kit;
+# fn main() -> notify_kit::Result<()> {
+use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
+
+let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx")
+    .with_app_credentials("cli_xxx", "app_secret_xxx")
+    .with_image_upload_max_bytes(10 * 1024 * 1024);
+let sink = FeishuWebhookSink::new(cfg)?;
+# Ok(())
+# }
+```
+
+说明：
+
+- 图片 URL 仅支持 `https`
+- 也支持本地文件路径（如 `![x](./a.png)`），会直接读取并上传
+- 上传失败时不会中断整条消息，自动回退为文本链接表示
 
 ## 错误信息（刻意保持“低敏感”）
 
