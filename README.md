@@ -60,6 +60,9 @@ notify-kit = { path = "crates/notify-kit" }
 - 如果当前没有 Tokio runtime：`notify` 会丢弃通知并 `tracing::warn!`；可用 `Hub::try_notify` 检测。
 - 如果需要可观测结果：用 `Hub::send(event).await`（会等待所有 sinks 完成/超时）。
 - 注意：`HubConfig.per_sink_timeout` 是 Hub 对每个 sink 的兜底超时；如果你把某个 sink 的 `timeout` 调大，也需要把 `per_sink_timeout` 调到 >= 该值，否则 Hub 可能会先超时。
+- 运行时限制（例如 `max_inflight_events`、`max_sink_sends_in_parallel`）放在 `HubLimits`，避免把执行期背压策略混进 `HubConfig` 的语义配置里。
+
+如果你需要显式控制这些限制，可用 `Hub::new_with_limits(...)` 搭配 `HubLimits::default().with_max_inflight_events(...).with_max_sink_sends_in_parallel(...)`。
 
 最小示例（需要在 Tokio runtime 中调用）：
 
@@ -83,7 +86,16 @@ hub.notify(Event::new("turn_completed", Severity::Success, "done"));
 
 ## 配置（环境变量）
 
-本库不规定环境变量协议；配置应由上层应用负责（比如 integration 层解析 env，然后构造 sinks + Hub）。
+本库不规定统一的环境变量协议；配置应由上层应用负责（比如 integration 层解析 env，然后构造 sinks + Hub）。
+
+如果你需要库自带的快捷接线方式，推荐使用：
+
+- `notify_kit::env::build_hub_from_standard_env(...)`
+- `notify_kit::env::StandardEnvHubOptions`
+
+它们只是 convenience helper，适合快速接线或共享一套简单约定；不是强制协议，也不是核心架构边界。
+
+root-level 的同名 re-export 仅保留兼容用途，并已标记为 deprecated；新接入代码应优先使用 `notify_kit::env::...` 路径。
 
 ## 与 omne-agent 集成
 

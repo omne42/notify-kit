@@ -55,6 +55,41 @@ impl Default for HubConfig {
     }
 }
 
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HubLimits {
+    /// Maximum number of events that may be in-flight inside `Hub`.
+    ///
+    /// This applies to both `notify()` background tasks and `send().await` calls waiting on sink
+    /// fan-out.
+    pub max_inflight_events: usize,
+    /// Maximum number of sink sends that may run in parallel for a single event fan-out.
+    pub max_sink_sends_in_parallel: usize,
+}
+
+impl Default for HubLimits {
+    fn default() -> Self {
+        Self {
+            max_inflight_events: DEFAULT_MAX_INFLIGHT_EVENTS,
+            max_sink_sends_in_parallel: DEFAULT_MAX_SINK_SENDS_IN_PARALLEL,
+        }
+    }
+}
+
+impl HubLimits {
+    #[must_use]
+    pub fn with_max_inflight_events(mut self, max_inflight_events: usize) -> Self {
+        self.max_inflight_events = max_inflight_events.max(1);
+        self
+    }
+
+    #[must_use]
+    pub fn with_max_sink_sends_in_parallel(mut self, max_sink_sends_in_parallel: usize) -> Self {
+        self.max_sink_sends_in_parallel = max_sink_sends_in_parallel.max(1);
+        self
+    }
+}
+
 #[derive(Clone)]
 pub struct Hub {
     inner: Arc<HubInner>,
@@ -75,7 +110,7 @@ struct HubSink {
 
 impl Hub {
     pub fn new(config: HubConfig, sinks: Vec<Arc<dyn Sink>>) -> Self {
-        Self::new_with_inflight_limit(config, sinks, DEFAULT_MAX_INFLIGHT_EVENTS)
+        Self::new_with_limits(config, sinks, HubLimits::default())
     }
 
     pub fn new_with_inflight_limit(
@@ -83,7 +118,21 @@ impl Hub {
         sinks: Vec<Arc<dyn Sink>>,
         max_inflight_events: usize,
     ) -> Self {
-        let max_inflight_events = max_inflight_events.max(1);
+        Self::new_with_limits(
+            config,
+            sinks,
+            HubLimits::default().with_max_inflight_events(max_inflight_events),
+        )
+    }
+
+    pub fn new_with_limits(
+        config: HubConfig,
+        sinks: Vec<Arc<dyn Sink>>,
+        limits: HubLimits,
+    ) -> Self {
+        let limits = HubLimits::default()
+            .with_max_inflight_events(limits.max_inflight_events)
+            .with_max_sink_sends_in_parallel(limits.max_sink_sends_in_parallel);
         let sinks = sinks
             .into_iter()
             .map(|sink| HubSink {
@@ -97,8 +146,8 @@ impl Hub {
                 .map(|enabled_kinds| enabled_kinds.into_iter().collect()),
             sinks,
             per_sink_timeout: config.per_sink_timeout,
-            inflight: Arc::new(tokio::sync::Semaphore::new(max_inflight_events)),
-            max_sink_sends_in_parallel: DEFAULT_MAX_SINK_SENDS_IN_PARALLEL,
+            inflight: Arc::new(tokio::sync::Semaphore::new(limits.max_inflight_events)),
+            max_sink_sends_in_parallel: limits.max_sink_sends_in_parallel,
         };
         Self {
             inner: Arc::new(inner),
@@ -303,6 +352,25 @@ mod tests {
     use super::*;
     use crate::event::Severity;
     use crate::sinks::{BoxFuture, Sink};
+
+    #[test]
+    fn hub_limits_default_matches_internal_defaults() {
+        let limits = HubLimits::default();
+        assert_eq!(limits.max_inflight_events, DEFAULT_MAX_INFLIGHT_EVENTS);
+        assert_eq!(
+            limits.max_sink_sends_in_parallel,
+            DEFAULT_MAX_SINK_SENDS_IN_PARALLEL
+        );
+    }
+
+    #[test]
+    fn hub_limits_clamp_zero_values_to_one() {
+        let limits = HubLimits::default()
+            .with_max_inflight_events(0)
+            .with_max_sink_sends_in_parallel(0);
+        assert_eq!(limits.max_inflight_events, 1);
+        assert_eq!(limits.max_sink_sends_in_parallel, 1);
+    }
 
     #[derive(Debug)]
     struct TestSink {
@@ -615,6 +683,64 @@ mod tests {
             let first = msg.find("- first:").expect("contains first");
             let second = msg.find("- second:").expect("contains second");
             assert!(first < second, "{msg}");
+        });
+    }
+
+    #[test]
+    fn send_respects_sink_parallel_limit() {
+        #[derive(Debug)]
+        struct TrackingSink {
+            current: Arc<AtomicUsize>,
+            max_seen: Arc<AtomicUsize>,
+            sleep: Duration,
+        }
+
+        impl Sink for TrackingSink {
+            fn name(&self) -> &'static str {
+                "tracking"
+            }
+
+            fn send<'a>(&'a self, _event: &'a Event) -> BoxFuture<'a, crate::Result<()>> {
+                Box::pin(async move {
+                    let current = self.current.fetch_add(1, Ordering::SeqCst) + 1;
+                    self.max_seen.fetch_max(current, Ordering::SeqCst);
+                    tokio::time::sleep(self.sleep).await;
+                    self.current.fetch_sub(1, Ordering::SeqCst);
+                    Ok(())
+                })
+            }
+        }
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("build tokio runtime");
+
+        rt.block_on(async {
+            let current = Arc::new(AtomicUsize::new(0));
+            let max_seen = Arc::new(AtomicUsize::new(0));
+            let sinks: Vec<Arc<dyn Sink>> = (0..3)
+                .map(|_| {
+                    Arc::new(TrackingSink {
+                        current: current.clone(),
+                        max_seen: max_seen.clone(),
+                        sleep: Duration::from_millis(20),
+                    }) as Arc<dyn Sink>
+                })
+                .collect();
+
+            let hub = Hub::new_with_limits(
+                HubConfig::default(),
+                sinks,
+                HubLimits::default()
+                    .with_max_inflight_events(8)
+                    .with_max_sink_sends_in_parallel(1),
+            );
+
+            hub.send(Event::new("kind", Severity::Info, "title"))
+                .await
+                .expect("send ok");
+            assert_eq!(max_seen.load(Ordering::SeqCst), 1);
         });
     }
 }

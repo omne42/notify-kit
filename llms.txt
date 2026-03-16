@@ -131,8 +131,14 @@ This file is an LLM-friendly bundle of the `notify-kit` documentation and exampl
 
 ## 非目标
 
-- 不提供“统一的环境变量协议”（交由上层 integration 层决定）
+- 不把“统一的环境变量协议”作为核心抽象（交由上层 integration 层决定）
 - 不追求复杂的重试/队列/投递保证（可在上层或自定义 sink 中实现）
+
+补充说明：
+
+- 库中提供的 `notify_kit::env::build_hub_from_standard_env(...)` / `notify_kit::env::StandardEnvHubOptions` 只是 convenience helper，用于快速接线或复用一套简单约定。
+- 它们不改变整体分层：配置协议依然属于 integration layer，而不是 `notify-kit` 的核心职责。
+- root-level re-export 仅保留兼容入口，并已标记为 deprecated；文档与新接入代码应统一使用 `notify_kit::env::...` 路径。
 
 ## 并发模型
 
@@ -340,7 +346,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify_kit::{
-    Event, Hub, HubConfig, Severity, Sink, SoundConfig, SoundSink, TryNotifyError,
+    Event, Hub, HubConfig, HubLimits, Severity, Sink, SoundConfig, SoundSink, TryNotifyError,
 };
 
 fn main() -> notify_kit::Result<()> {
@@ -381,6 +387,11 @@ fn main() -> notify_kit::Result<()> {
                 // 你可以选择：记录日志、降级为 stdout、暂存到队列里、或忽略。
                 tracing::debug!("no tokio runtime; notification skipped");
             }
+            Err(TryNotifyError::Overloaded) => {
+                // 运行时限流生效：说明当前 Hub 已经处于忙碌状态。
+                // 这里同样建议降级处理，而不是影响主流程。
+                tracing::debug!("hub overloaded; notification skipped");
+            }
         }
 
         Ok::<_, notify_kit::Error>(())
@@ -388,6 +399,22 @@ fn main() -> notify_kit::Result<()> {
 
     Ok(())
 }
+```
+
+如果你需要调节运行时背压，而不是语义配置，可以改用 `HubLimits`：
+
+```rust,no_run,edition2024
+use std::sync::Arc;
+
+use notify_kit::{Hub, HubConfig, HubLimits, SoundConfig, SoundSink};
+
+let hub = Hub::new_with_limits(
+    HubConfig::default(),
+    vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))],
+    HubLimits::default()
+        .with_max_inflight_events(64)
+        .with_max_sink_sends_in_parallel(8),
+);
 ```
 
 ## 我该用 `notify` 还是 `send`？
@@ -428,6 +455,8 @@ let cfg = HubConfig {
     per_sink_timeout: Duration::from_secs(5),
 };
 ```
+
+这里的 `HubConfig` 只描述过滤与超时。像 inflight 上限、单事件 fan-out 并行度这类运行时限制，放到 `HubLimits` 中更合适。
 
 ---
 ## docs/examples.md
@@ -531,7 +560,19 @@ hub.notify(Event::new("debug_noise", Severity::Info, "ignored"));
 
 # 集成与配置
 
-本库**不规定**环境变量协议；配置应由上层应用负责（例如解析 env，然后构造 sinks + Hub）。
+本库**不规定**统一的环境变量协议；配置应由上层应用负责（例如解析 env，然后构造 sinks + Hub）。
+
+如果你只想快速接线，库里也提供了：
+
+- `notify_kit::env::build_hub_from_standard_env(...)`
+- `notify_kit::env::StandardEnvHubOptions`
+
+它们是 convenience helper，不是强制协议，也不改变推荐分层。
+
+补充说明：
+
+- root-level 的兼容 re-export 仅用于平滑迁移，并已标记为 deprecated。
+- 新代码与文档示例应优先使用 `notify_kit::env::...` 路径。
 
 ## 一个推荐的配置层结构
 
@@ -547,6 +588,11 @@ your-app
 1) 解析配置（例如 `NOTIFY_SOUND=1`、`NOTIFY_FEISHU_WEBHOOK_URL=...`）
 2) 构造 sinks（`SoundSink`、`FeishuWebhookSink`、自定义 sinks）
 3) 构造 `Hub` 并注入到业务逻辑
+
+补充建议：
+
+- `HubConfig` 放过滤、超时这类语义配置
+- `HubLimits` 放 inflight 上限、sink fan-out 并行度这类执行期限制
 
 ## 一个参考的 env/CLI 协议（示例）
 
@@ -565,7 +611,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify_kit::{
-    FeishuWebhookConfig, FeishuWebhookSink, Hub, HubConfig, Sink, SoundConfig, SoundSink,
+    FeishuWebhookConfig, FeishuWebhookSink, Hub, HubConfig, HubLimits, Sink, SoundConfig,
+    SoundSink,
 };
 
 fn build_hub_from_env() -> notify_kit::Result<Hub> {
@@ -589,15 +636,18 @@ fn build_hub_from_env() -> notify_kit::Result<Hub> {
         .map(Duration::from_millis)
         .unwrap_or(Duration::from_secs(5));
 
-    Ok(Hub::new(
+    Ok(Hub::new_with_limits(
         HubConfig {
             enabled_kinds,
             per_sink_timeout,
         },
         sinks,
+        HubLimits::default(),
     ))
 }
 ```
+
+如果你采用库自带的 env helper，建议通过 `notify_kit::env::build_hub_from_standard_env(...)` 访问，并把它当成 bootstrap helper：能减少样板代码，但不妨碍你在自己的 integration layer 继续包装、替换或扩展。
 
 ## 与 omne-agent 的集成（示例）
 
@@ -669,8 +719,7 @@ cargo run -p omne-agent-app-server --features notify
 - `Event` / `Severity`：事件数据结构与严重级别
 - `Sink`：通知渠道抽象
 - `SoundSink` / `SoundConfig`：本地提示音/终端 bell
-- `FeishuWebhookSink` / `FeishuWebhookConfig`：飞书 webhook（text）
-
+- `FeishuWebhookSink` / `FeishuWebhookConfig`：飞书 webhook（text / post 富文本，支持 Markdown 图片上传）
 
 ---
 ## docs/api/hub.md
@@ -706,6 +755,21 @@ let hub = Hub::new_with_inflight_limit(
 
 当 inflight 超过上限时，`notify()` 会丢弃该条通知并记录 warning；`send().await` 会等待额度释放。
 
+如果你还需要限制“单个事件扇出时，最多同时发送多少个 sink”，可以显式传入 `HubLimits`：
+
+```rust,no_run,edition2024
+use std::sync::Arc;
+use notify_kit::{Hub, HubConfig, HubLimits, SoundConfig, SoundSink};
+
+let hub = Hub::new_with_limits(
+    HubConfig::default(),
+    vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))],
+    HubLimits::default()
+        .with_max_inflight_events(32)
+        .with_max_sink_sends_in_parallel(4),
+);
+```
+
 ## HubConfig
 
 - `enabled_kinds: Option<BTreeSet<String>>`
@@ -714,6 +778,21 @@ let hub = Hub::new_with_inflight_limit(
 - `per_sink_timeout: Duration`
   - 默认 `5s`
   - 作为兜底，避免任何 sink 卡住调用方
+
+`HubConfig` 只表达“Hub 的语义配置”，例如过滤和超时。
+
+## HubLimits
+
+- `max_inflight_events: usize`
+  - 默认 `128`
+  - 控制 Hub 内同时在途的事件数量（`notify()` 后台任务和 `send().await` 都受影响）
+- `max_sink_sends_in_parallel: usize`
+  - 默认 `16`
+  - 控制单个事件 fan-out 时，最多并行发送多少个 sinks
+
+`HubLimits` 表达的是“执行期限制 / 背压策略”，故意与 `HubConfig` 分开，避免配置职责混杂。
+
+推荐通过 `HubLimits::default().with_...(...)` 逐项覆盖，而不是把它当成业务语义配置对象来扩展。
 
 一个更完整的配置示例：
 
@@ -739,7 +818,7 @@ let cfg = HubConfig {
 ## 行为细节
 
 - **kind 被禁用时是 no-op**：即使没有 Tokio runtime 也不会报错（直接返回）。
-- **并发发送**：`send().await` 会并发调用所有 sinks。
+- **并发发送**：`send().await` 会并发调用多个 sinks，并受 `HubLimits.max_sink_sends_in_parallel` 限制。
 - **每个 sink 单独超时**：由 `per_sink_timeout` 控制；超时会被视为该 sink 失败。
 - **错误聚合**：当一个或多个 sinks 失败时，会返回一个聚合错误，内容类似：
 
@@ -949,7 +1028,11 @@ let sink = SoundSink::new(SoundConfig {
 
 # FeishuWebhookSink
 
-`FeishuWebhookSink` 通过飞书群机器人 webhook 发送 **text** 消息（可选签名）。
+`FeishuWebhookSink` 通过飞书群机器人 webhook 发送消息（可选签名），支持：
+
+- 默认 `text` 消息
+- 对 `Event.body` 中的 Markdown 自动转 `post` 富文本
+- Markdown 图片（`![alt](...)`）可选自动上传为飞书图片并内嵌显示
 
 ## 构造
 
@@ -1000,7 +1083,7 @@ let sink = FeishuWebhookSink::new_with_secret_strict(cfg, "your_secret")?;
 
 ## 消息长度
 
-`FeishuWebhookConfig.max_chars` 用于限制最终 text 消息长度（默认 `4000`）。超出会截断并追加 `...`：
+`FeishuWebhookConfig.max_chars` 用于限制文本内容长度（默认 `4000`，超出会截断并追加 `...`）：
 
 ```rust,no_run,edition2024
 use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
@@ -1039,11 +1122,38 @@ let sink = FeishuWebhookSink::new(cfg)?;
 
 ## 输出格式
 
-文本内容由以下部分组成（按顺序）：
+默认 text 模式下，文本内容由以下部分组成（按顺序）：
 
 1) `title`
 2) `body`（如果存在且非空）
 3) 每个 tag：`key=value`（逐行）
+
+当 `body` 是 Markdown 且启用富文本（默认启用）时：
+
+- 使用飞书 `post` 结构发送
+- 链接会映射为可点击富文本链接
+- 图片：
+  - 未配置应用凭据时：降级为可读文本 + 原链接
+  - 配置了应用凭据时：自动上传并以内嵌图片显示
+
+## Markdown 图片上传（可选）
+
+如果你希望 Markdown 图片真正显示为“图片”而不是链接，需要提供应用凭据：
+
+```rust,no_run,edition2024
+use notify_kit::{FeishuWebhookConfig, FeishuWebhookSink};
+
+let cfg = FeishuWebhookConfig::new("https://open.feishu.cn/open-apis/bot/v2/hook/xxx")
+    .with_app_credentials("cli_xxx", "app_secret_xxx")
+    .with_image_upload_max_bytes(10 * 1024 * 1024);
+let sink = FeishuWebhookSink::new(cfg)?;
+```
+
+说明：
+
+- 图片 URL 仅支持 `https`
+- 也支持本地文件路径（如 `![x](./a.png)`），会直接读取并上传
+- 上传失败时不会中断整条消息，自动回退为文本链接表示
 
 ## 错误信息（刻意保持“低敏感”）
 
@@ -1610,6 +1720,12 @@ impl Sink for StderrSink {
 CARGO_NET_OFFLINE=true ./scripts/gate.sh
 ```
 
+提交前严格检查（由 `githooks/pre-commit` 自动执行）：
+
+```bash
+./scripts/pre-commit-check.sh
+```
+
 常用命令：
 
 ```bash
@@ -1622,6 +1738,7 @@ cargo test --workspace
 - `crates/notify-kit/`：库实现
 - `docs/`：mdBook 文档（本目录）
 - `scripts/gate.sh`：格式化/编译门禁
+- `scripts/pre-commit-check.sh`：提交前严格检查（clippy + 关键 lint）
 
 ## 文档维护
 

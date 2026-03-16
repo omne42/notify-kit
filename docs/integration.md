@@ -1,6 +1,18 @@
 # 集成与配置
 
-本库**不规定**环境变量协议；配置应由上层应用负责（例如解析 env，然后构造 sinks + Hub）。
+本库**不规定**统一的环境变量协议；配置应由上层应用负责（例如解析 env，然后构造 sinks + Hub）。
+
+如果你只想快速接线，库里也提供了：
+
+- `notify_kit::env::build_hub_from_standard_env(...)`
+- `notify_kit::env::StandardEnvHubOptions`
+
+它们是 convenience helper，不是强制协议，也不改变推荐分层。
+
+补充说明：
+
+- root-level 的兼容 re-export 仅用于平滑迁移，并已标记为 deprecated。
+- 新代码与文档示例应优先使用 `notify_kit::env::...` 路径。
 
 ## 一个推荐的配置层结构
 
@@ -16,6 +28,11 @@ your-app
 1) 解析配置（例如 `NOTIFY_SOUND=1`、`NOTIFY_FEISHU_WEBHOOK_URL=...`）
 2) 构造 sinks（`SoundSink`、`FeishuWebhookSink`、自定义 sinks）
 3) 构造 `Hub` 并注入到业务逻辑
+
+补充建议：
+
+- `HubConfig` 放过滤、超时这类语义配置
+- `HubLimits` 放 inflight 上限、sink fan-out 并行度这类执行期限制
 
 ## 一个参考的 env/CLI 协议（示例）
 
@@ -35,7 +52,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify_kit::{
-    FeishuWebhookConfig, FeishuWebhookSink, Hub, HubConfig, Sink, SoundConfig, SoundSink,
+    FeishuWebhookConfig, FeishuWebhookSink, Hub, HubConfig, HubLimits, Sink, SoundConfig,
+    SoundSink,
 };
 
 fn build_hub_from_env() -> notify_kit::Result<Hub> {
@@ -59,15 +77,18 @@ fn build_hub_from_env() -> notify_kit::Result<Hub> {
         .map(Duration::from_millis)
         .unwrap_or(Duration::from_secs(5));
 
-    Ok(Hub::new(
+    Ok(Hub::new_with_limits(
         HubConfig {
             enabled_kinds,
             per_sink_timeout,
         },
         sinks,
+        HubLimits::default(),
     ))
 }
 ```
+
+如果你采用库自带的 env helper，建议通过 `notify_kit::env::build_hub_from_standard_env(...)` 访问，并把它当成 bootstrap helper：能减少样板代码，但不妨碍你在自己的 integration layer 继续包装、替换或扩展。
 
 ## 与 omne-agent 的集成（示例）
 

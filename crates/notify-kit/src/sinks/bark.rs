@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use crate::Event;
 use crate::sinks::http::{
-    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
-    read_text_body_limited, redact_url, select_http_client, send_reqwest, validate_url_path_prefix,
+    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, http_status_text_error,
+    parse_and_validate_https_url, read_text_body_limited, redact_url, response_body_read_error,
+    select_http_client, send_reqwest, validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_body_and_tags_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
@@ -177,26 +178,10 @@ impl Sink for BarkSink {
 
             let status = resp.status();
             if !status.is_success() {
-                let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await
-                {
-                    Ok(body) => body,
-                    Err(err) => {
-                        return Err(anyhow::anyhow!(
-                            "bark http error: {status} (failed to read response body: {err})"
-                        )
-                        .into());
-                    }
-                };
-                let summary = truncate_chars(body.trim(), 200);
-                if summary.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "bark http error: {status} (response body omitted)"
-                    )
-                    .into());
-                }
-                return Err(
-                    anyhow::anyhow!("bark http error: {status}, response={summary}").into(),
-                );
+                let body = read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES)
+                    .await
+                    .map_err(|err| response_body_read_error("bark http error", status, &err))?;
+                return Err(http_status_text_error("bark", status, &body));
             }
 
             let content_type_is_json = resp

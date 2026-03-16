@@ -33,7 +33,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify_kit::{
-    Event, Hub, HubConfig, Severity, Sink, SoundConfig, SoundSink, TryNotifyError,
+    Event, Hub, HubConfig, HubLimits, Severity, Sink, SoundConfig, SoundSink, TryNotifyError,
 };
 
 fn main() -> notify_kit::Result<()> {
@@ -74,6 +74,11 @@ fn main() -> notify_kit::Result<()> {
                 // 你可以选择：记录日志、降级为 stdout、暂存到队列里、或忽略。
                 tracing::debug!("no tokio runtime; notification skipped");
             }
+            Err(TryNotifyError::Overloaded) => {
+                // 运行时限流生效：说明当前 Hub 已经处于忙碌状态。
+                // 这里同样建议降级处理，而不是影响主流程。
+                tracing::debug!("hub overloaded; notification skipped");
+            }
         }
 
         Ok::<_, notify_kit::Error>(())
@@ -81,6 +86,23 @@ fn main() -> notify_kit::Result<()> {
 
     Ok(())
 }
+```
+
+如果你需要调节运行时背压，而不是语义配置，可以改用 `HubLimits`：
+
+```rust,no_run,edition2024
+# extern crate notify_kit;
+use std::sync::Arc;
+
+use notify_kit::{Hub, HubConfig, HubLimits, SoundConfig, SoundSink};
+
+let hub = Hub::new_with_limits(
+    HubConfig::default(),
+    vec![Arc::new(SoundSink::new(SoundConfig { command_argv: None }))],
+    HubLimits::default()
+        .with_max_inflight_events(64)
+        .with_max_sink_sends_in_parallel(8),
+);
 ```
 
 ## 我该用 `notify` 还是 `send`？
@@ -128,3 +150,5 @@ let cfg = HubConfig {
     per_sink_timeout: Duration::from_secs(5),
 };
 ```
+
+这里的 `HubConfig` 只描述过滤与超时。像 inflight 上限、单事件 fan-out 并行度这类运行时限制，放到 `HubLimits` 中更合适。

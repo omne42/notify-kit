@@ -2,9 +2,9 @@ use std::time::Duration;
 
 use crate::Event;
 use crate::sinks::http::{
-    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url,
-    read_text_body_limited, redact_url, redact_url_str, select_http_client, send_reqwest,
-    validate_url_path_prefix,
+    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, http_status_text_error,
+    parse_and_validate_https_url, read_text_body_limited, redact_url, redact_url_str,
+    response_body_read_error, select_http_client, send_reqwest, validate_url_path_prefix,
 };
 use crate::sinks::text::{TextLimits, format_event_text_limited, truncate_chars};
 use crate::sinks::{BoxFuture, Sink};
@@ -123,32 +123,23 @@ impl Sink for SlackWebhookSink {
                 Ok(body) => body,
                 Err(err) => {
                     if status.is_success() {
-                        return Err(anyhow::anyhow!(
-                            "slack webhook api error: {status} (failed to read response body: {err})"
-                        )
-                        .into());
+                        return Err(response_body_read_error(
+                            "slack webhook api error",
+                            status,
+                            &err,
+                        ));
                     }
-                    return Err(anyhow::anyhow!(
-                        "slack webhook http error: {status} (failed to read response body: {err})"
-                    )
-                    .into());
+                    return Err(response_body_read_error(
+                        "slack webhook http error",
+                        status,
+                        &err,
+                    ));
                 }
             };
             let body = body.trim();
 
             if !status.is_success() {
-                let summary = truncate_chars(body, 200);
-                if summary.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "slack webhook http error: {status} (response body omitted)"
-                    )
-                    .into());
-                }
-
-                return Err(anyhow::anyhow!(
-                    "slack webhook http error: {status}, response={summary}"
-                )
-                .into());
+                return Err(http_status_text_error("slack webhook", status, body));
             }
 
             if body.is_empty() || body.eq_ignore_ascii_case("ok") {

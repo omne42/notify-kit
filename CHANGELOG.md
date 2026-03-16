@@ -10,6 +10,7 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 - `Hub::try_notify`：当缺少 Tokio runtime 时返回错误（避免静默丢通知）。
 - `Hub::send(event).await`：提供可观测的发送结果（等待所有 sinks 完成/超时）。
 - `Hub::new_with_inflight_limit`：限制 `notify()` 的后台并发，超限会丢弃并 warning（背压/防 DoS）。
+- `HubLimits` / `Hub::new_with_limits`：把 inflight 上限与单事件 fan-out 并行度这类执行期限制从 `HubConfig` 语义中拆开，显式建模运行时背压参数。
 - `FeishuWebhookConfig`：新增 `max_chars`/`with_max_chars` 与 `enforce_public_ip`/`with_public_ip_check`。
 - `GenericWebhookConfig::new_strict` / `GenericWebhookSink::new_strict`：提供更严格的 SSRF 防护（强制 host allow-list + path 前缀 + 公网 IP 校验）。
 - `notify-kit/sound-command`：允许 `SoundSink` 执行外部命令播放提示音（默认关闭，未启用时回退为终端 bell）。
@@ -47,6 +48,8 @@ The format is based on *Keep a Changelog*, and this project adheres to *Semantic
 
 ### Changed
 - release: bump workspace package version to `1.0.0`.
+- env helper: 推荐公开路径调整为 `notify_kit::env::build_hub_from_standard_env(...)` / `notify_kit::env::StandardEnvHubOptions`；root-level re-export 仅保留兼容用途并已标记为 deprecated。
+- docs: 明确 env helper 是 convenience helper，而不是库级强制 env 协议。
 - Webhook/API sinks: `select_http_client` 在命中过期 `pinned client` 条目时会先清理再进入刷新流程，减少失败重建场景下的无效缓存驻留与后续冗余检查。
 - `DiscordWebhookSink` / `GenericWebhookSink` / `GitHubCommentSink`：在成功响应路径增加“有界响应体排空”（仅在可判定小响应体时），提升 HTTP 连接复用率并减少高频发送场景下的额外建连开销。
 - `Hub`：内部 `enabled_kinds` 索引从 `BTreeSet` 查找切换为 `HashSet`（保持对外配置类型不变），降低高频 `notify/send` kind 过滤路径的查找复杂度。

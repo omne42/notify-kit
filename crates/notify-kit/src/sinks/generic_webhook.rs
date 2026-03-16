@@ -2,11 +2,10 @@ use std::time::Duration;
 
 use crate::Event;
 use crate::sinks::http::{
-    DEFAULT_MAX_RESPONSE_BODY_BYTES, build_http_client, parse_and_validate_https_url_basic,
-    read_text_body_limited, redact_url, redact_url_str, select_http_client, send_reqwest,
-    try_drain_response_body_for_reuse, validate_url_path_prefix,
+    build_http_client, ensure_http_success, parse_and_validate_https_url_basic, redact_url,
+    redact_url_str, select_http_client, send_reqwest, validate_url_path_prefix,
 };
-use crate::sinks::text::{TextLimits, format_event_text_limited, truncate_chars};
+use crate::sinks::text::{TextLimits, format_event_text_limited};
 use crate::sinks::{BoxFuture, Sink};
 
 #[non_exhaustive]
@@ -110,6 +109,20 @@ pub struct GenericWebhookSink {
     enforce_public_ip: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GenericWebhookValidationMode {
+    Relaxed,
+    Strict,
+}
+
+struct NormalizedGenericWebhookConfig {
+    url: reqwest::Url,
+    payload_field: String,
+    timeout: Duration,
+    max_chars: usize,
+    enforce_public_ip: bool,
+}
+
 impl std::fmt::Debug for GenericWebhookSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GenericWebhookSink")
@@ -123,78 +136,86 @@ impl std::fmt::Debug for GenericWebhookSink {
 
 impl GenericWebhookSink {
     pub fn new(config: GenericWebhookConfig) -> crate::Result<Self> {
-        let GenericWebhookConfig {
-            url,
-            payload_field,
-            timeout,
-            max_chars,
-            enforce_public_ip,
-            path_prefix,
-            allowed_hosts,
-        } = config;
-
-        let payload_field = payload_field.trim();
-        if payload_field.is_empty() {
-            return Err(anyhow::anyhow!("generic webhook payload_field must not be empty").into());
-        }
-        let path_prefix = path_prefix.and_then(normalize_optional_trimmed);
-        let allowed_hosts = normalize_nonempty_trimmed_vec(allowed_hosts);
-
-        if !enforce_public_ip && allowed_hosts.is_empty() {
-            return Err(anyhow::anyhow!(
-                "generic webhook disabling public ip check requires allowed_hosts"
-            )
-            .into());
-        }
-
-        let url = parse_and_validate_https_url_basic(&url)?;
-        if let Some(prefix) = path_prefix.as_deref() {
-            validate_url_path_prefix(&url, prefix)?;
-        }
-
-        if !allowed_hosts.is_empty() {
-            let Some(host) = url.host_str() else {
-                return Err(anyhow::anyhow!("url must have a host").into());
-            };
-            let allowed = allowed_hosts.iter().any(|h| host.eq_ignore_ascii_case(h));
-            if !allowed {
-                return Err(anyhow::anyhow!("url host is not allowed").into());
-            }
-        }
-
-        let client = build_http_client(timeout)?;
-        Ok(Self {
-            url,
-            payload_field: payload_field.to_string(),
-            client,
-            timeout,
-            max_chars,
-            enforce_public_ip,
-        })
+        Self::build_from_config(config, GenericWebhookValidationMode::Relaxed)
     }
 
     pub fn new_strict(config: GenericWebhookConfig) -> crate::Result<Self> {
-        let GenericWebhookConfig {
-            url,
-            payload_field,
-            timeout,
-            max_chars,
-            enforce_public_ip,
-            path_prefix,
-            allowed_hosts,
-        } = config;
+        Self::build_from_config(config, GenericWebhookValidationMode::Strict)
+    }
 
-        if !enforce_public_ip {
-            return Err(
-                anyhow::anyhow!("generic webhook strict mode requires public ip check").into(),
-            );
-        }
-        if allowed_hosts.is_empty() {
-            return Err(
-                anyhow::anyhow!("generic webhook strict mode requires allowed_hosts").into(),
-            );
-        }
-        let Some(path_prefix) = path_prefix.and_then(normalize_optional_trimmed) else {
+    fn build_from_config(
+        config: GenericWebhookConfig,
+        mode: GenericWebhookValidationMode,
+    ) -> crate::Result<Self> {
+        let normalized = normalize_config(config, mode)?;
+        let client = build_http_client(normalized.timeout)?;
+        Ok(Self {
+            url: normalized.url,
+            payload_field: normalized.payload_field,
+            client,
+            timeout: normalized.timeout,
+            max_chars: normalized.max_chars,
+            enforce_public_ip: normalized.enforce_public_ip,
+        })
+    }
+
+    fn build_payload(event: &Event, payload_field: &str, max_chars: usize) -> serde_json::Value {
+        let text = format_event_text_limited(event, TextLimits::new(max_chars));
+        serde_json::json!({ payload_field: text })
+    }
+}
+
+fn normalize_config(
+    config: GenericWebhookConfig,
+    mode: GenericWebhookValidationMode,
+) -> crate::Result<NormalizedGenericWebhookConfig> {
+    let GenericWebhookConfig {
+        url,
+        payload_field,
+        timeout,
+        max_chars,
+        enforce_public_ip,
+        path_prefix,
+        allowed_hosts,
+    } = config;
+
+    let payload_field = normalize_payload_field(payload_field)?;
+    let allowed_hosts = normalize_allowed_hosts(allowed_hosts, mode)?;
+    let path_prefix = path_prefix.and_then(normalize_optional_trimmed);
+
+    validate_security_requirements(
+        enforce_public_ip,
+        &allowed_hosts,
+        path_prefix.as_deref(),
+        mode,
+    )?;
+    let path_prefix = validate_path_prefix(path_prefix, mode)?;
+    let url = validate_target_url(&url, &allowed_hosts, path_prefix.as_deref())?;
+
+    Ok(NormalizedGenericWebhookConfig {
+        url,
+        payload_field,
+        timeout,
+        max_chars,
+        enforce_public_ip,
+    })
+}
+
+fn normalize_payload_field(payload_field: String) -> crate::Result<String> {
+    let payload_field = payload_field.trim();
+    if payload_field.is_empty() {
+        return Err(anyhow::anyhow!("generic webhook payload_field must not be empty").into());
+    }
+    Ok(payload_field.to_string())
+}
+
+fn validate_path_prefix(
+    path_prefix: Option<String>,
+    mode: GenericWebhookValidationMode,
+) -> crate::Result<Option<String>> {
+    let path_prefix = path_prefix.and_then(normalize_optional_trimmed);
+    if mode == GenericWebhookValidationMode::Strict {
+        let Some(path_prefix) = path_prefix else {
             return Err(anyhow::anyhow!("generic webhook strict mode requires path_prefix").into());
         };
         if !path_prefix.starts_with('/') {
@@ -203,41 +224,80 @@ impl GenericWebhookSink {
             )
             .into());
         }
-        if allowed_hosts.iter().any(|h| h.trim().is_empty()) {
-            return Err(anyhow::anyhow!("generic webhook allowed_hosts must not be empty").into());
-        }
-        let payload_field = payload_field.trim();
-        if payload_field.is_empty() {
-            return Err(anyhow::anyhow!("generic webhook payload_field must not be empty").into());
-        }
-        let allowed_hosts = normalize_nonempty_trimmed_vec(allowed_hosts);
+        return Ok(Some(path_prefix));
+    }
+    Ok(path_prefix)
+}
 
-        let url = parse_and_validate_https_url_basic(&url)?;
-        validate_url_path_prefix(&url, &path_prefix)?;
+fn normalize_allowed_hosts(
+    allowed_hosts: Vec<String>,
+    mode: GenericWebhookValidationMode,
+) -> crate::Result<Vec<String>> {
+    if mode == GenericWebhookValidationMode::Strict
+        && allowed_hosts.iter().any(|host| host.trim().is_empty())
+    {
+        return Err(anyhow::anyhow!("generic webhook allowed_hosts must not be empty").into());
+    }
+    Ok(normalize_nonempty_trimmed_vec(allowed_hosts))
+}
 
+fn validate_security_requirements(
+    enforce_public_ip: bool,
+    allowed_hosts: &[String],
+    path_prefix: Option<&str>,
+    mode: GenericWebhookValidationMode,
+) -> crate::Result<()> {
+    if !enforce_public_ip {
+        if mode == GenericWebhookValidationMode::Strict {
+            return Err(
+                anyhow::anyhow!("generic webhook strict mode requires public ip check").into(),
+            );
+        }
+        if allowed_hosts.is_empty() {
+            return Err(anyhow::anyhow!(
+                "generic webhook disabling public ip check requires allowed_hosts"
+            )
+            .into());
+        }
+    }
+
+    if mode == GenericWebhookValidationMode::Strict {
+        if allowed_hosts.is_empty() {
+            return Err(
+                anyhow::anyhow!("generic webhook strict mode requires allowed_hosts").into(),
+            );
+        }
+        if path_prefix.is_none() {
+            return Err(anyhow::anyhow!("generic webhook strict mode requires path_prefix").into());
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_target_url(
+    url: &str,
+    allowed_hosts: &[String],
+    path_prefix: Option<&str>,
+) -> crate::Result<reqwest::Url> {
+    let url = parse_and_validate_https_url_basic(url)?;
+    if let Some(prefix) = path_prefix {
+        validate_url_path_prefix(&url, prefix)?;
+    }
+
+    if !allowed_hosts.is_empty() {
         let Some(host) = url.host_str() else {
             return Err(anyhow::anyhow!("url must have a host").into());
         };
-        let allowed = allowed_hosts.iter().any(|h| host.eq_ignore_ascii_case(h));
+        let allowed = allowed_hosts
+            .iter()
+            .any(|allowed_host| host.eq_ignore_ascii_case(allowed_host));
         if !allowed {
             return Err(anyhow::anyhow!("url host is not allowed").into());
         }
-
-        let client = build_http_client(timeout)?;
-        Ok(Self {
-            url,
-            payload_field: payload_field.to_string(),
-            client,
-            timeout,
-            max_chars,
-            enforce_public_ip,
-        })
     }
 
-    fn build_payload(event: &Event, payload_field: &str, max_chars: usize) -> serde_json::Value {
-        let text = format_event_text_limited(event, TextLimits::new(max_chars));
-        serde_json::json!({ payload_field: text })
-    }
+    Ok(url)
 }
 
 fn normalize_optional_trimmed(value: String) -> Option<String> {
@@ -277,30 +337,7 @@ impl Sink for GenericWebhookSink {
                 "generic webhook",
             )
             .await?;
-
-            let status = resp.status();
-            if status.is_success() {
-                try_drain_response_body_for_reuse(resp).await;
-                return Ok(());
-            }
-
-            let body = match read_text_body_limited(resp, DEFAULT_MAX_RESPONSE_BODY_BYTES).await {
-                Ok(body) => body,
-                Err(err) => {
-                    return Err(anyhow::anyhow!(
-                        "generic webhook http error: {status} (failed to read response body: {err})"
-                    )
-                    .into());
-                }
-            };
-            let summary = truncate_chars(body.trim(), 200);
-            if summary.is_empty() {
-                return Err(anyhow::anyhow!(
-                    "generic webhook http error: {status} (response body omitted)"
-                )
-                .into());
-            }
-            Err(anyhow::anyhow!("generic webhook http error: {status}, response={summary}").into())
+            ensure_http_success(resp, "generic webhook").await
         })
     }
 }
